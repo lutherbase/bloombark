@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bloombark Terminal Apps</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="2" width="9" height="9" rx="1" fill="#F5A623"/>
+            <rect x="13" y="2" width="9" height="9" rx="1" fill="#F5A623"/>
+            <rect x="2" y="13" width="9" height="9" rx="1" fill="#F5A623"/>
+            <rect x="13" y="13" width="9" height="9" rx="1" fill="#4A90E2"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-main">BLOOMBARK</span>
+          <span class="brand-sub">TERMINAL APPS</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item" data-page="dashboard">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+          Dashboard
+        </a>
+        <a href="#" class="nav-item active" data-page="ai-analyzer">
+          <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          AI Analyzer
+        </a>
+        <a href="#" class="nav-item" data-page="wallet-tracker">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M21 18v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1"/><polyline points="15 3 9 3 9 21 15 21"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+          Wallet Tracker
+        </a>
+        <a href="#" class="nav-item" data-page="smart-money">
+          <svg class="nav-icon" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Smart Money
+        </a>
+        <a href="#" class="nav-item" data-page="insider-scan">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          Insider Scan
+        </a>
+        <a href="#" class="nav-item" data-page="narrative">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Narrative
+        </a>
+        <a href="#" class="nav-item" data-page="ai-trading">
+          <svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          AI Trading Agent
+        </a>
+        <a href="#" class="nav-item" data-page="auto-research">
+          <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Auto Research
+        </a>
+
+        <div class="nav-divider"></div>
+
+        <a href="#" class="nav-item" data-page="alerts">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          Alerts
+          <span class="nav-badge">3</span>
+        </a>
+        <a href="#" class="nav-item" data-page="watchlist">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          Watchlist
+        </a>
+        <a href="#" class="nav-item" data-page="portfolio">
+          <svg class="nav-icon" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Portfolio
+        </a>
+        <a href="#" class="nav-item" data-page="leaderboard">
+          <svg class="nav-icon" viewBox="0 0 24 24"><polyline points="18 20 18 10"/><polyline points="12 20 12 4"/><polyline points="6 20 6 14"/></svg>
+          Leaderboard
+        </a>
+
+        <div class="nav-divider"></div>
+
+        <a href="#" class="nav-item" data-page="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </a>
+        <a href="#" class="nav-item" data-page="docs">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Docs
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="pro-badge">
+          <svg width="16" height="16" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Pro Plan
+        </div>
+        <span class="pro-expires">Expires in 23 days</span>
+        <button class="upgrade-btn">Upgrade Now</button>
+        <div class="user-info">
+          <div class="user-avatar">U</div>
+          <div class="user-details">
+            <span class="user-name">User</span>
+            <span class="user-tier">Premium</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <h1 class="page-title" id="pageTitle">AI ANALYZER</h1>
+        <p class="page-subtitle" id="pageSubtitle">Analyze token risk, insider activity & wallet behavior from contract address</p>
+        <div class="topbar-right">
+          <div class="network-selector" id="networkSelector" style="cursor:default">
+            <span class="network-icon" id="networkIcon">🌐</span>
+            <span id="networkLabel">Auto</span>
+          </div>
+          <div class="live-indicator">
+            <span class="live-dot"></span>
+            Live
+            <span class="update-time" id="updateTime">Updated 0s ago</span>
+          </div>
+          <button class="export-btn" id="exportBtn">Export Report</button>
+        </div>
+      </header>
+
+      <!-- Page Content -->
+      <div class="page-content" id="pageContent">
+        <!-- AI Analyzer Page (default) -->
+        <div class="page ai-analyzer-page active" id="page-ai-analyzer">
+          <!-- Search Bar -->
+          <div class="search-section">
+            <label class="search-label">PASTE TOKEN ADDRESS / CONTRACT</label>
+            <div class="search-bar">
+              <input type="text" id="contractInput" placeholder="Enter token contract address (e.g. 7xKX...pump)" class="search-input" autocomplete="off" spellcheck="false" />
+              <button class="copy-btn" id="copyBtn" title="Copy">
+                <svg width="16" height="16" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button class="scan-btn" id="scanBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                SCAN INSIDER
+              </button>
+            </div>
+          </div>
+
+          <!-- Token Header (hidden until scan) -->
+          <div class="token-header" id="tokenHeader" style="display:none">
+            <div class="token-identity">
+              <div class="token-logo" id="tokenLogo">?</div>
+              <div class="token-info">
+                <div class="token-name-row">
+                  <span class="token-name" id="tokenName">-</span>
+                  <span class="token-verified" id="tokenVerified" style="display:none">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#4A90E2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  </span>
+                </div>
+                <div class="token-symbol-row">
+                  <span class="token-symbol" id="tokenSymbol">-</span>
+                  <span class="token-network" id="tokenNetwork">
+                    <svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+                    <span id="tokenNetworkLabel">-</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="token-stats">
+              <div class="stat-item">
+                <span class="stat-label">MARKET CAP</span>
+                <span class="stat-value" id="marketCap">-</span>
+                <span class="stat-change positive" id="mcChange">-</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">LIQUIDITY</span>
+                <span class="stat-value" id="liquidity">-</span>
+                <span class="stat-change positive" id="liqLock">-</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">24H VOLUME</span>
+                <span class="stat-value" id="volume24h">-</span>
+                <span class="stat-change positive" id="volChange">-</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">HOLDERS</span>
+                <span class="stat-value" id="holders">-</span>
+                <span class="stat-change positive" id="holdersChange">-</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">CREATED</span>
+                <span class="stat-value" id="created">-</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Analysis Grid (hidden until scan) -->
+          <div class="analysis-grid" id="analysisGrid" style="display:none">
+
+            <!-- Row 1: Risk Score + Alerts + Price Chart -->
+            <div class="grid-row row-3col">
+              <!-- Risk Score -->
+              <div class="card risk-card">
+                <div class="card-header">
+                  <h3>BLOOMBARK RISK SCORE</h3>
+                  <span class="info-icon" title="AI-calculated risk based on wallet behavior">ⓘ</span>
+                </div>
+                <div class="risk-gauge-container">
+                  <canvas id="riskGauge" width="200" height="120"></canvas>
+                  <div class="risk-score-display">
+                    <span class="risk-number" id="riskNumber">-</span>
+                    <span class="risk-denom">/100</span>
+                  </div>
+                </div>
+                <div class="risk-label" id="riskLabel">-</div>
+                <div class="confidence-bar">
+                  <span class="confidence-text">Confidence: <span id="confidence">-</span>%</span>
+                  <div class="conf-bar-track">
+                    <div class="conf-bar-fill" id="confBarFill" style="width:0%"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Insider Alerts -->
+              <div class="card alerts-card">
+                <div class="card-header">
+                  <h3>INSIDER ALERTS</h3>
+                  <a href="#" class="view-full">View Full Report →</a>
+                </div>
+                <div class="alerts-grid" id="alertsGrid"></div>
+              </div>
+
+              <!-- Price Chart -->
+              <div class="card price-card">
+                <div class="card-header">
+                  <h3>PRICE CHART (REALTIME)</h3>
+                  <div class="chart-controls">
+                    <button class="chart-interval active" data-interval="5m">5m</button>
+                    <button class="chart-interval" data-interval="15m">15m</button>
+                    <button class="chart-interval" data-interval="1h">1h</button>
+                    <button class="chart-interval" data-interval="4h">4h</button>
+                    <button id="chartScreenshot" title="Copy chart as image" style="background:none;border:1px solid #2a2f45;border-radius:4px;color:#8b92a8;cursor:pointer;padding:2px 7px;font-size:10px;margin-left:4px;white-space:nowrap;" onclick="captureChart()">Copy</button>
+                  </div>
+                </div>
+                <div class="price-info-row">
+                  <span class="current-price" id="currentPrice">$-</span>
+                  <span class="price-change" id="priceChange">-</span>
+                </div>
+                <div id="priceChart" style="height:220px; width:100%;"></div>
+              </div>
+            </div>
+
+            <!-- Row 2: Wallet Map + Recent Activity — same grid as row-3col -->
+            <div class="grid-row" style="grid-template-columns: 220px 1fr 1fr; gap: 12px; display: grid;">
+              <!-- Wallet Relationship Map spans first 2 columns -->
+              <div class="card wallet-map-card" style="grid-column: 1 / 3;">
+                <div class="card-header">
+                  <h3>WALLET RELATIONSHIP MAP</h3>
+                  <a id="bubblemapsLink" href="#" target="_blank" class="view-graph-btn" style="text-decoration:none;display:none">view on bubblemaps ↗</a>
+                </div>
+                <div id="walletMapContainer" style="width:100%;height:320px;border-radius:8px;overflow:hidden;background:transparent;position:relative;">
+                  <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8b92a8;font-size:12px;">Scan a token to load map</div>
+                </div>
+              </div>
+
+              <!-- Recent Insider Activity -->
+              <div class="card activity-card">
+                <div class="card-header">
+                  <h3>RECENT INSIDER ACTIVITY</h3>
+                  <span class="info-icon">ⓘ</span>
+                  <select class="activity-filter">
+                    <option>All Activity</option>
+                    <option>Buys</option>
+                    <option>Sells</option>
+                    <option>Transfers</option>
+                  </select>
+                </div>
+                <div class="activity-list" id="activityList"></div>
+              </div>
+            </div>
+
+            <!-- Row 3: Token Distribution + Team Allocation + Launch Pattern -->
+            <div class="grid-row row-3col">
+              <!-- Token Distribution -->
+              <div class="card distribution-card">
+                <div class="card-header">
+                  <h3>TOKEN DISTRIBUTION</h3>
+                  <span class="info-icon">ⓘ</span>
+                </div>
+                <div class="donut-container">
+                  <canvas id="distributionChart" width="140" height="140"></canvas>
+                  <div class="donut-center">
+                    <span class="donut-label">Total Supply</span>
+                    <span class="donut-value">1.0B</span>
+                    <span class="donut-symbol" id="donutSymbol">TOKEN</span>
+                  </div>
+                </div>
+                <div class="dist-legend" id="distLegend"></div>
+                <div class="dist-warning" id="distWarning" style="display:none">
+                  <svg width="12" height="12" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                  High concentration detected in team/insider wallets
+                </div>
+              </div>
+
+              <!-- Team/Insider Allocation -->
+              <div class="card allocation-card">
+                <div class="card-header">
+                  <h3>TEAM/INSIDER ALLOCATION</h3>
+                  <span class="info-icon">ⓘ</span>
+                </div>
+                <div class="allocation-table" id="allocationTable"></div>
+                <div class="allocation-warning" id="allocWarning" style="display:none">
+                  <svg width="12" height="12" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                  This token has no vesting detected
+                </div>
+              </div>
+
+              <!-- Launch Pattern Analysis -->
+              <div class="card launch-card">
+                <div class="card-header">
+                  <h3>LAUNCH PATTERN ANALYSIS</h3>
+                  <span class="info-icon">ⓘ</span>
+                </div>
+                <div class="launch-table" id="launchTable"></div>
+                <a href="#" class="view-pattern-btn">View Pattern Details →</a>
+              </div>
+            </div>
+
+            <!-- Row 4: Potential Insider Wallets + AI Summary -->
+            <div class="grid-row row-2col">
+              <!-- Potential Insider Wallets -->
+              <div class="card wallets-card">
+                <div class="card-header">
+                  <h3>POTENTIAL INSIDER WALLETS</h3>
+                  <span class="info-icon">ⓘ</span>
+                  <button class="filter-btn">
+                    <svg width="12" height="12" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                    Filter
+                  </button>
+                </div>
+                <div class="wallets-table">
+                  <div class="wallets-thead wallets-thead-v2">
+                    <span>WALLET</span>
+                    <span>TYPE</span>
+                    <span>ALLOCATION</span>
+                    <span>ACTIVITY (7D)</span>
+                    <span>P/L</span>
+                    <span>ENTRY / LAST ACTIVE</span>
+                    <span>RISK</span>
+                  </div>
+                  <div class="wallets-tbody" id="walletsTable"></div>
+                </div>
+                <a href="#" class="view-all-wallets" id="viewAllWallets">View All 23 Potential Wallets →</a>
+              </div>
+
+              <!-- AI Insider Summary -->
+              <div class="card ai-summary-card">
+                <div class="card-header">
+                  <h3>AI INSIDER SUMMARY</h3>
+                  <span class="info-icon">ⓘ</span>
+                  <span class="ai-confidence-badge">CONFIDENCE: <span id="aiConfidence">-</span>%</span>
+                </div>
+                <p class="ai-verdict" id="aiVerdict">-</p>
+                <div class="ai-findings">
+                  <span class="findings-label">Key Findings:</span>
+                  <ul class="findings-list" id="findingsList"></ul>
+                </div>
+                <div class="ai-actions">
+                  <button class="generate-report-btn" id="generateReportBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Generate Full AI Report
+                  </button>
+                  <button class="share-report-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    Share Report
+                  </button>
+                </div>
+                <div class="monitor-wallets">
+                  <div class="monitor-text">
+                    <strong>Monitor these wallets in real-time</strong>
+                    <span>Add to watchlist and get instant alerts</span>
+                  </div>
+                  <label class="toggle-switch">
+                    <input type="checkbox" id="monitorToggle" />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                <button class="track-wallets-btn">Track Wallets</button>
+              </div>
+            </div>
+
+            <!-- Holder Analysis Row -->
+            <div class="grid-row row-2col">
+              <!-- Holder Stats -->
+              <div class="card holder-stats-card">
+                <div class="card-header">
+                  <h3>HOLDER ANALYSIS</h3>
+                  <span class="info-icon">ⓘ</span>
+                </div>
+                <div class="holder-stats-grid" id="holderStatsGrid"></div>
+                <div style="height:200px; margin-top:12px;">
+                  <canvas id="holderChart"></canvas>
+                </div>
+              </div>
+
+              <!-- Volume Profile -->
+              <div class="card volume-card">
+                <div class="card-header">
+                  <h3>VOLUME PROFILE (24H)</h3>
+                  <span class="info-icon">ⓘ</span>
+                </div>
+                <div style="height:250px;">
+                  <canvas id="volumeChart"></canvas>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Empty state -->
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </div>
+            <h2>Enter a Contract Address to Analyze</h2>
+            <p>Paste any Solana token contract address above and click SCAN INSIDER to get AI-powered risk analysis, insider detection, and wallet behavior patterns.</p>
+            <div class="trending-section">
+              <h4>TRENDING TOKENS</h4>
+              <div class="trending-list" id="trendingList"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Other pages (placeholder) -->
+        <div class="page" id="page-dashboard">
+          <div class="dashboard-wrap">
+            <!-- Chain Filter -->
+            <div class="dash-filter-bar" id="dashFilterBar">
+              <button class="dash-filter-btn active" data-chain="all">All Chains</button>
+            </div>
+            <!-- Best Volume -->
+            <div class="dash-section">
+              <div class="dash-section-header">
+                <span class="dash-section-title">🏆 BEST VOLUME TOP 10</span>
+                <span class="dash-section-sub" id="dashVolSub">All Chains · 24h</span>
+              </div>
+              <div class="dash-vol-wrap">
+                <div class="dash-volume-grid" id="dashVolumeGrid">
+                  <div class="dash-loading">Loading…</div>
+                </div>
+              </div>
+            </div>
+            <!-- Trending + New Pairs side by side -->
+            <div class="dash-two-col">
+              <div class="dash-section">
+                <div class="dash-section-header">
+                  <span class="dash-section-title">🔥 TRENDING TOKENS</span>
+                  <span class="dash-section-sub" id="dashTrendSub">All Chains</span>
+                </div>
+                <div class="dash-list" id="dashTrendingList">
+                  <div class="dash-loading">Loading…</div>
+                </div>
+              </div>
+              <div class="dash-section">
+                <div class="dash-section-header">
+                  <span class="dash-section-title">🆕 NEW PAIRS</span>
+                  <span class="dash-section-sub" id="dashNewSub">All Chains</span>
+                </div>
+                <div class="dash-list" id="dashNewPairsList">
+                  <div class="dash-loading">Loading…</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="page placeholder-page" id="page-wallet-tracker">
+          <div class="placeholder-content"><h2>Wallet Tracker</h2><p>Track and monitor specific wallets for activity.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-smart-money">
+          <div class="placeholder-content"><h2>Smart Money</h2><p>Follow smart money wallets and their moves.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-insider-scan">
+          <div class="placeholder-content"><h2>Insider Scan</h2><p>Batch scan tokens for insider activity.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-narrative">
+          <div class="placeholder-content"><h2>Narrative</h2><p>Track trending narratives and sectors.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-ai-trading">
+          <div class="placeholder-content"><h2>AI Trading Agent</h2><p>Automated trading signals powered by AI.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-auto-research">
+          <div class="placeholder-content"><h2>Auto Research</h2><p>Automated token research and reports.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-alerts">
+          <div class="placeholder-content"><h2>Alerts</h2><p>Your configured alerts and notifications.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-watchlist">
+          <div class="placeholder-content"><h2>Watchlist</h2><p>Your saved tokens and watchlist.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-portfolio">
+          <div class="placeholder-content"><h2>Portfolio</h2><p>Your portfolio performance and holdings.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-leaderboard">
+          <div class="placeholder-content"><h2>Leaderboard</h2><p>Top traders and wallets by performance.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-settings">
+          <div class="placeholder-content"><h2>Settings</h2><p>Configure your Bloombark Terminal preferences.</p></div>
+        </div>
+        <div class="page placeholder-page" id="page-docs">
+          <div class="placeholder-content"><h2>Documentation</h2><p>API docs and usage guides.</p></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Loading overlay -->
+  <div class="loading-overlay" id="loadingOverlay" style="display:none">
+    <div class="loading-content">
+      <div class="loading-spinner"></div>
+      <div class="loading-steps" id="loadingSteps">
+        <div class="loading-step active">Fetching token data...</div>
+        <div class="loading-step">Analyzing wallet clusters...</div>
+        <div class="loading-step">Running AI risk model...</div>
+        <div class="loading-step">Generating report...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js?v=19"></script>
+</body>
+</html>
