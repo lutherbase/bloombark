@@ -17,6 +17,8 @@ const DS_CHART     = 'https://io.dexscreener.com';
 const GECKO        = 'https://api.geckoterminal.com/api/v2';
 const GECKO_HEADS  = { 'Accept': 'application/json;version=20230302' };
 
+const _gtGet = (url) => axios.get(url, { timeout: 10000, headers: GECKO_HEADS }).catch(() => null);
+
 // Map our chain key → GeckoTerminal network id
 const GECKO_NETWORK = {
   solana:   'solana',
@@ -1383,119 +1385,144 @@ app.get('/api/trending', async (req, res) => {
   }
 });
 
-// ─── Dashboard: New Pairs, Trending, Best Volume (all chains) ─────────────────
-let _dashCache = null;
-let _dashCacheAt = 0;
-const DASH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+// ─── Dashboard: New Pairs, Trending, Best Volume — GeckoTerminal ──────────────
+const DASH_CACHE_TTL = 5 * 60 * 1000;
+const DASH_CHAINS    = ['solana', 'ethereum', 'bsc', 'base'];
+const GT_NET         = { solana:'solana', ethereum:'eth', bsc:'bsc', base:'base' };
+const NETWORK_MAP    = { eth:'ethereum', bsc:'bsc', base:'base', solana:'solana' };
+
+// Cache per key: 'all' | 'solana' | 'ethereum' | 'bsc' | 'base'
+const _dashCaches   = {};  // key → { payload, at }
+const _dashFetching = {};  // key → boolean
+
+const _chainLabel = id => ({ ethereum:'Ethereum', bsc:'BSC', base:'Base', solana:'Solana' }[id] || id);
+
+const _mapPool = p => {
+  const a       = p.attributes || {};
+  const rawNet  = p.relationships?.network?.data?.id || p.id?.split('_')[0] || 'unknown';
+  const netId   = NETWORK_MAP[rawNet] || rawNet;
+  const baseAddr = p.relationships?.base_token?.data?.id?.split('_').slice(1).join('_') || '';
+  return {
+    name:          (a.name || '?').replace(/\s+\d+(\.\d+)?%/g, '').trim(),
+    address:       baseAddr,
+    pairAddress:   a.address || '',
+    network:       _chainLabel(netId),
+    networkId:     netId,
+    price:         parseFloat(a.base_token_price_usd || 0),
+    priceChange24h:parseFloat(a.price_change_percentage?.h24 || 0),
+    volume24h:     parseFloat(a.volume_usd?.h24 || 0),
+    liquidity:     parseFloat(a.reserve_in_usd || 0),
+    fdv:           parseFloat(a.fdv_usd || 0),
+    createdAt:     a.pool_created_at || null,
+    buys24h:       parseInt(a.transactions?.h24?.buys  || 0),
+    sells24h:      parseInt(a.transactions?.h24?.sells || 0),
+  };
+};
+
+const _dedupe = arr => arr.filter((p, i, a) =>
+  p && a.findIndex(x => x && x.pairAddress === p.pairAddress && x.networkId === p.networkId) === i
+);
+
+const _buildPayload = (rawTrending, rawNew, chains) => {
+  const allPools = _dedupe([...rawTrending, ...rawNew].map(_mapPool));
+  const cutoff   = Date.now() - 86400000;
+
+  const seenBV = new Set();
+  const bestVolume = [...allPools]
+    .filter(p => p.volume24h > 0)
+    .sort((a, b) => b.volume24h - a.volume24h)
+    .filter(p => { const k = `${p.address}_${p.networkId}`; if (seenBV.has(k)) return false; seenBV.add(k); return true; })
+    .slice(0, 200);
+
+  const seenTR = new Set();
+  const trending = [...allPools]
+    .filter(p => (p.buys24h + p.sells24h) > 0)
+    .sort((a, b) => (b.buys24h + b.sells24h) - (a.buys24h + a.sells24h))
+    .filter(p => { const k = `${p.address}_${p.networkId}`; if (seenTR.has(k)) return false; seenTR.add(k); return true; })
+    .slice(0, 200);
+
+  const newPairs = _dedupe(rawNew.map(_mapPool))
+    .filter(p => p.createdAt && new Date(p.createdAt).getTime() >= cutoff)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 200);
+
+  return { success: true, data: { bestVolume, trending, newPairs, chains } };
+};
+
+const _serial = async (urls) => {
+  const results = [];
+  for (const url of urls) {
+    results.push(await _gtGet(url));
+    if (urls.indexOf(url) < urls.length - 1) await new Promise(r => setTimeout(r, 3000));
+  }
+  return results;
+};
+
+// Fetch data for a specific chain (4 requests) or all chains (13 requests)
+async function _fetchDash(key) {
+  if (_dashFetching[key]) return;
+  _dashFetching[key] = true;
+  try {
+    const getRaw = r => r?.data?.data || [];
+
+    if (key === 'all') {
+      const GT_CHAINS = ['solana','eth','bsc','base'];
+      const urls = [
+        `${GECKO}/networks/trending_pools?page=1`,
+        ...GT_CHAINS.map(c => `${GECKO}/networks/${c}/trending_pools?page=1`),
+        ...GT_CHAINS.map(c => `${GECKO}/networks/${c}/new_pools?page=1`),
+      ];
+      const results  = await _serial(urls);
+      const n        = GT_CHAINS.length;
+      const rawTr    = results.slice(0, 1 + n).flatMap(getRaw);
+      const rawNew   = results.slice(1 + n).flatMap(getRaw);
+      const payload  = _buildPayload(rawTr, rawNew, DASH_CHAINS);
+      if (new Set(payload.data.bestVolume.map(p => p.networkId)).size >= 2) {
+        _dashCaches['all'] = { payload, at: Date.now() };
+        console.log(`[dash:all] BV=${payload.data.bestVolume.length} TR=${payload.data.trending.length} NP=${payload.data.newPairs.length}`);
+      }
+    } else {
+      const gtChain  = GT_NET[key];
+      if (!gtChain) return;
+      const urls = [
+        `${GECKO}/networks/${gtChain}/trending_pools?page=1`,
+        `${GECKO}/networks/${gtChain}/trending_pools?page=2`,
+        `${GECKO}/networks/${gtChain}/new_pools?page=1`,
+      ];
+      const [tr1, tr2, np1] = await _serial(urls);
+      const rawTr  = [...getRaw(tr1), ...getRaw(tr2)];
+      const rawNew = getRaw(np1);
+      const payload = _buildPayload(rawTr, rawNew, [key]);
+      if (payload.data.bestVolume.length > 0 || payload.data.newPairs.length > 0) {
+        _dashCaches[key] = { payload, at: Date.now() };
+        console.log(`[dash:${key}] BV=${payload.data.bestVolume.length} TR=${payload.data.trending.length} NP=${payload.data.newPairs.length}`);
+      }
+    }
+  } catch (e) {
+    console.error(`Dashboard fetch error [${key}]:`, e.message);
+  } finally {
+    _dashFetching[key] = false;
+  }
+}
 
 app.get('/api/dashboard', async (req, res) => {
-  if (_dashCache && Date.now() - _dashCacheAt < DASH_CACHE_TTL) {
-    return res.json(_dashCache);
+  const key    = DASH_CHAINS.includes(req.query.chain) ? req.query.chain : 'all';
+  const cached = _dashCaches[key];
+  if (cached && Date.now() - cached.at < DASH_CACHE_TTL) {
+    return res.json(cached.payload);
   }
-  try {
-    // Networks to fetch per-chain trending (ensures each chain has ≥10 results)
-    const PER_CHAIN = ['solana', 'eth', 'bsc', 'base', 'arbitrum', 'tron'];
-
-    // Fetch global trending p1+p2, new pools p1+p2, and per-chain trending — all in parallel
-    // Per-chain new_pools skipped (GT often returns 0); backfill handled client-side
-    const [tr1, tr2, np1, np2, ...chainTrending] = await Promise.all([
-      axios.get(`${GECKO}/networks/trending_pools?page=1`, { timeout: 10000, headers: GECKO_HEADS }).catch(() => null),
-      axios.get(`${GECKO}/networks/trending_pools?page=2`, { timeout: 10000, headers: GECKO_HEADS }).catch(() => null),
-      axios.get(`${GECKO}/networks/new_pools?page=1`,      { timeout: 10000, headers: GECKO_HEADS }).catch(() => null),
-      axios.get(`${GECKO}/networks/new_pools?page=2`,      { timeout: 10000, headers: GECKO_HEADS }).catch(() => null),
-      ...PER_CHAIN.map(n => axios.get(`${GECKO}/networks/${n}/trending_pools?page=1`, { timeout: 10000, headers: GECKO_HEADS }).catch(() => null)),
-    ]);
-
-    const chainLabel = id => {
-      const map = { eth:'Ethereum', bsc:'BSC', base:'Base', arbitrum:'Arbitrum', solana:'Solana', tron:'Tron', polygon:'Polygon', avalanche:'Avalanche', optimism:'Optimism', 'arbitrum-nova':'Arbitrum Nova', zksync:'zkSync', linea:'Linea', mantle:'Mantle', scroll:'Scroll' };
-      return map[id] || (id ? id.charAt(0).toUpperCase() + id.slice(1) : 'Unknown');
-    };
-
-    const mapPool = p => {
-      const a = p.attributes || {};
-      const networkId = p.relationships?.network?.data?.id || p.id?.split('_')[0] || 'unknown';
-      const baseToken = p.relationships?.base_token?.data?.id?.split('_')[1] || '';
-      return {
-        name:          (a.name || '?').replace(/\s+\d+(\.\d+)?%/g, '').trim(),
-        address:       baseToken,
-        pairAddress:   a.address || '',
-        network:       chainLabel(networkId),
-        networkId,
-        price:         parseFloat(a.base_token_price_usd || 0),
-        priceChange24h:parseFloat(a.price_change_percentage?.h24 || 0),
-        volume24h:     parseFloat(a.volume_usd?.h24 || 0),
-        liquidity:     parseFloat(a.reserve_in_usd || 0),
-        fdv:           parseFloat(a.fdv_usd || 0),
-        createdAt:     a.pool_created_at || null,
-        buys24h:       parseInt(a.transactions?.h24?.buys  || 0),
-        sells24h:      parseInt(a.transactions?.h24?.sells || 0),
-      };
-    };
-
-    const dedupe = (arr) => arr.filter((p, i, a) => a.findIndex(x => x.address === p.address && x.networkId === p.networkId) === i);
-
-    // Raw pools — merge global + per-chain trending
-    const perChainTrRaw = chainTrending.flatMap(r => r?.data?.data || []);
-    const rawTrending    = [...(tr1?.data?.data || []), ...(tr2?.data?.data || []), ...perChainTrRaw];
-    const rawNewFromGecko = [...(np1?.data?.data || []), ...(np2?.data?.data || [])];
-    // If new pools empty, fallback to DS profiles
-    let rawNewFinal = rawNewFromGecko;
-    if (rawNewFinal.length === 0) {
-      const dsProfiles = await axios.get(`${DEXSCREENER}/token-profiles/latest/v1`, { timeout: 8000 }).catch(() => null);
-      rawNewFinal = (dsProfiles?.data || []).map(t => ({
-        attributes: { name: t.tokenAddress?.slice(0,8), address: t.tokenAddress, pool_created_at: t.updatedAt, base_token_price_usd:0, reserve_in_usd:0, volume_usd:{}, price_change_percentage:{}, fdv_usd:0, transactions:{} },
-        relationships: { network: { data: { id: t.chainId } }, base_token: { data: { id: `${t.chainId}_${t.tokenAddress}` } } },
-        id: `${t.chainId}_${t.tokenAddress}`,
-      }));
-    }
-
-    const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
-    const cutoff7d  = Date.now() - 7  * 24 * 60 * 60 * 1000;
-    const trending  = dedupe(rawTrending.map(mapPool));
-
-    // New pairs: 24h from gecko new_pools, supplemented by recent trending for sparse chains
-    const newPairsRaw = dedupe(rawNewFinal.map(mapPool))
-      .filter(p => !p.createdAt || new Date(p.createdAt).getTime() >= cutoff24h);
-
-    // Count per chain; backfill sparse chains from trending
-    const newByChain = {};
-    newPairsRaw.forEach(p => { newByChain[p.networkId] = (newByChain[p.networkId] || 0) + 1; });
-    // chains with 0 new pairs get any trending pool; chains with 1-2 get recent (≤7d)
-    const backfill = trending.filter(p => {
-      const count = newByChain[p.networkId] || 0;
-      if (count === 0) return true; // no data at all — use any trending
-      if (count < 3)  return p.createdAt && new Date(p.createdAt).getTime() >= cutoff7d;
-      return false;
-    });
-    const newPairs = dedupe([...newPairsRaw, ...backfill])
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
-    // Best Volume: merge trending + new, sort by vol, dedupe, keep top 150 (frontend filters to 10 per chain)
-    const bestVolume = dedupe([...rawTrending, ...rawNewFinal].map(mapPool))
-      .filter(p => p.volume24h > 0)
-      .sort((a, b) => b.volume24h - a.volume24h)
-      .slice(0, 150);
-
-    // Collect unique chains present in data
-    const chains = [...new Set([...trending, ...newPairs, ...bestVolume].map(p => p.networkId))].sort();
-
-    const payload = { success: true, data: { newPairs, trending, bestVolume, chains } };
-    // Only update cache if we got good data (not rate-limited empty response)
-    const chainCount = new Set([...trending, ...bestVolume].map(p => p.networkId)).size;
-    if (chainCount >= 3) {
-      _dashCache = payload;
-      _dashCacheAt = Date.now();
-    } else if (_dashCache) {
-      // Rate limited — serve stale cache
-      return res.json(_dashCache);
-    }
-    res.json(payload);
-  } catch (e) {
-    console.error('Dashboard error:', e.message);
-    if (_dashCache) return res.json(_dashCache);
-    res.status(500).json({ error: e.message });
+  _fetchDash(key);
+  const deadline = Date.now() + 35000;
+  while (!_dashCaches[key] && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 500));
   }
+  if (_dashCaches[key]) return res.json(_dashCaches[key].payload);
+  res.status(503).json({ error: 'Dashboard data not yet available, please retry' });
 });
+
+// Pre-warm "all" on startup; per-chain loaded on demand
+setTimeout(() => _fetchDash('all'), 3000);
+setInterval(() => _fetchDash('all'), DASH_CACHE_TTL);
 
 // ─── WebSocket: realtime price ticks ──────────────────────────────────────────
 const subscribers = new Map();

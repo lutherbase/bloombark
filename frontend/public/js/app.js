@@ -76,7 +76,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     const target = document.getElementById('page-' + page);
     if (target) target.classList.add('active');
     const titles = {
-      'dashboard':    ['DASHBOARD',       'Portfolio overview and market summary'],
+      'dashboard':    ['MARKET OVERVIEW',  'Real-time market data across chains'],
       'ai-analyzer':  ['AI ANALYZER',     'Analyze token risk, insider activity & wallet behavior from contract address'],
       'wallet-tracker':['WALLET TRACKER', 'Track and monitor specific wallets in real-time'],
       'smart-money':  ['SMART MONEY',     'Follow smart money wallets and their moves'],
@@ -1625,39 +1625,45 @@ function renderNewPairs(items, el) {
   }).join('');
 }
 
-function renderDashFilter(chains) {
+function renderDashFilter() {
   const bar = $('dashFilterBar');
-  const CHAIN_LABEL = { eth:'Ethereum', bsc:'BSC', base:'Base', arbitrum:'Arbitrum', solana:'Solana', tron:'Tron', polygon:'Polygon', avalanche:'Avalanche', optimism:'Optimism', linea:'Linea', scroll:'Scroll', mantle:'Mantle', zksync:'zkSync' };
-  const EXCLUDED = ['ton', 'avalanche-2', 'avax', 'avalanche'];
+  const STATIC_CHAINS = [
+    { id: 'solana',   label: 'Solana' },
+    { id: 'ethereum', label: 'Ethereum' },
+    { id: 'bsc',      label: 'BSC' },
+    { id: 'base',     label: 'Base' },
+  ];
   bar.innerHTML = `<button class="dash-filter-btn ${_dashChain==='all'?'active':''}" data-chain="all">All Chains</button>` +
-    chains.filter(c => !EXCLUDED.includes(c))
-      .map(c => `<button class="dash-filter-btn ${_dashChain===c?'active':''}" data-chain="${c}">${CHAIN_LABEL[c]||c}</button>`).join('');
+    STATIC_CHAINS.map(c => `<button class="dash-filter-btn ${_dashChain===c.id?'active':''}" data-chain="${c.id}">${c.label}</button>`).join('');
   bar.querySelectorAll('.dash-filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      _dashChain = btn.dataset.chain;
+      if (btn.dataset.chain === _dashChain) return;
       bar.querySelectorAll('.dash-filter-btn').forEach(b => b.classList.toggle('active', b === btn));
-      const label = btn.textContent;
-      $('dashVolSub').textContent  = `${label} · 24h`;
-      $('dashTrendSub').textContent = label;
-      $('dashNewSub').textContent   = label;
-      renderBestVolume(_dashData.bestVolume);
-      renderDashList(_dashData.trending,  $('dashTrendingList'));
-      renderNewPairs(_dashData.newPairs,  $('dashNewPairsList'));
+      fetchDashboard(btn.dataset.chain);
     });
   });
 }
 
-async function loadDashboard() {
+function _setDashLoading() {
+  ['dashVolumeGrid','dashTrendingList','dashNewPairsList'].forEach(id => {
+    const el = $(id);
+    if (el) el.innerHTML = `<div class="dash-loading">Loading...</div>`;
+  });
+}
+
+async function fetchDashboard(chain) {
+  _dashChain = chain;
+  const label = chain === 'all' ? 'All Chains' : ({ solana:'Solana', ethereum:'Ethereum', bsc:'BSC', base:'Base' }[chain] || chain);
+  $('dashVolSub').textContent   = `${label} · 24h`;
+  $('dashTrendSub').textContent = label;
+  $('dashNewSub').textContent   = label;
+  _setDashLoading();
   try {
-    const res  = await fetch(`${API_BASE}/dashboard`);
+    const url  = chain === 'all' ? `${API_BASE}/dashboard` : `${API_BASE}/dashboard?chain=${chain}`;
+    const res  = await fetch(url);
     const json = await res.json();
     if (!json.success) throw new Error(json.error);
-    _dashData  = json.data;
-    _dashChain = 'all';
-    $('dashVolSub').textContent   = 'All Chains · 24h';
-    $('dashTrendSub').textContent = 'All Chains';
-    $('dashNewSub').textContent   = 'All Chains';
-    renderDashFilter(json.data.chains || []);
+    _dashData = json.data;
     renderBestVolume(_dashData.bestVolume);
     renderDashList(_dashData.trending,  $('dashTrendingList'));
     renderNewPairs(_dashData.newPairs,  $('dashNewPairsList'));
@@ -1667,4 +1673,13 @@ async function loadDashboard() {
       if (el) el.innerHTML = `<div class="dash-loading" style="color:var(--accent-red)">Failed to load data</div>`;
     });
   }
+}
+
+async function loadDashboard() {
+  _dashChain = 'all';
+  renderDashFilter();
+  $('dashVolSub').textContent   = 'All Chains · 24h';
+  $('dashTrendSub').textContent = 'All Chains';
+  $('dashNewSub').textContent   = 'All Chains';
+  await fetchDashboard('all');
 }
