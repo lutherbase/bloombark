@@ -1,3 +1,40 @@
+/* ─── Toast ───────────────────────────────────────────────────────────────── */
+function showWipModal() {
+  const existing = document.getElementById('wipModal');
+  if (existing) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'wipModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(2px);z-index:9998;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:#161822;border:1px solid #1e2235;border-radius:16px;padding:32px 28px;width:320px;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,0.7)">
+      <div style="font-size:32px;margin-bottom:16px">🚧</div>
+      <div style="font-size:14px;font-weight:800;color:#e2e8f0;margin-bottom:8px">Under Development</div>
+      <div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:24px">This feature is currently under development.<br>Stay tuned for updates!</div>
+      <button onclick="document.getElementById('wipModal').remove()" style="background:#27c97f;border:none;border-radius:10px;color:#000;font-size:12px;font-weight:700;padding:10px 28px;cursor:pointer;letter-spacing:0.5px">Got it</button>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = 'app-toast';
+  t.textContent = msg;
+  t.style.cssText = `
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:${type === 'success' ? 'var(--accent-green)' : 'var(--accent-red)'};
+    color:#000; font-size:12px; font-weight:600; letter-spacing:.04em;
+    padding:8px 18px; border-radius:6px; z-index:9999;
+    opacity:0; transition:opacity .2s, transform .2s; pointer-events:none;
+  `;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => { t.style.opacity = '1'; t.style.transform = 'translateX(-50%) translateY(0)'; });
+  setTimeout(() => {
+    t.style.opacity = '0'; t.style.transform = 'translateX(-50%) translateY(10px)';
+    setTimeout(() => t.remove(), 200);
+  }, 2000);
+}
+
 /* ─── Config ──────────────────────────────────────────────────────────────── */
 const API_BASE = 'http://localhost:3001/api';
 const WS_URL   = 'ws://localhost:3001';
@@ -5,6 +42,7 @@ const WS_URL   = 'ws://localhost:3001';
 /* ─── State ───────────────────────────────────────────────────────────────── */
 let selectedChain  = 'auto'; // 'auto' | 'solana' | 'ethereum' | 'bsc' | 'base' | 'arbitrum' | 'tron'
 let currentData    = null;
+let _cachedCA      = null;
 let priceChart     = null;
 let distChart      = null;
 let holderChart    = null;
@@ -90,7 +128,15 @@ document.querySelectorAll('.nav-item').forEach(el => {
       'leaderboard':  ['LEADERBOARD',     'Top traders and wallets by performance'],
       'settings':     ['SETTINGS',        'Configure your Bloombark Terminal preferences'],
       'docs':         ['DOCUMENTATION',   'API docs, guides, and reference'],
+      'landing':      ['LANDING PAGE',    'About Bloombark Terminal'],
     };
+    const _wip = ['smart-money','insider-scan','narrative','ai-trading','auto-research','alerts','portfolio','leaderboard'];
+    if (_wip.includes(page)) {
+      el.classList.remove('active');
+      showWipModal();
+      return;
+    }
+
     const [title, sub] = titles[page] || ['BLOOMBARK TERMINAL', ''];
     $('pageTitle').textContent    = title;
     $('pageSubtitle').textContent = sub;
@@ -100,17 +146,18 @@ document.querySelectorAll('.nav-item').forEach(el => {
     $('exportBtn').style.display       = isAnalyzer ? '' : 'none';
 
     if (page === 'dashboard') loadDashboard();
+    if (page === 'watchlist') renderWatchlistPage();
+    if (page === 'landing') loadLandingCA();
   });
 });
 
-// Initial setup
+// Initial setup — always start on landing page
 (function() {
-  const activePage = document.querySelector('.nav-item.active')?.dataset?.page;
-  if (activePage !== 'ai-analyzer') {
-    $('networkSelector').style.display = 'none';
-    $('exportBtn').style.display       = 'none';
-  }
-  if (activePage === 'dashboard') loadDashboard();
+  $('networkSelector').style.display = 'none';
+  $('exportBtn').style.display       = 'none';
+  $('pageTitle').textContent    = 'LANDING PAGE';
+  $('pageSubtitle').textContent = 'About Bloombark Terminal';
+  loadLandingCA();
 })();
 
 /* ─── Live Clock ──────────────────────────────────────────────────────────── */
@@ -185,6 +232,19 @@ function validateChainAddress(chain, addr) {
 }
 
 /* ─── Scan Button ─────────────────────────────────────────────────────────── */
+function requireWallet(action) {
+  if (_privyUser) { action(); return; }
+  openWalletModal();
+  // after connect, re-run action once
+  const _orig = _setWalletConnected;
+  const oneShot = (user) => {
+    _setWalletConnected = _orig;
+    _orig(user);
+    if (user) setTimeout(action, 300);
+  };
+  _setWalletConnected = oneShot;
+}
+
 $('scanBtn').addEventListener('click', () => {
   const addr = $('contractInput').value.trim();
   if (!addr) {
@@ -192,7 +252,7 @@ $('scanBtn').addEventListener('click', () => {
     setTimeout(() => ($('contractInput').style.borderColor = ''), 1200);
     return;
   }
-  scanToken(addr);
+  requireWallet(() => scanToken(addr));
 });
 $('contractInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('scanBtn').click(); });
 $('copyBtn').addEventListener('click', () => {
@@ -200,6 +260,7 @@ $('copyBtn').addEventListener('click', () => {
   if (val) navigator.clipboard.writeText(val).then(() => {
     $('copyBtn').style.color = 'var(--accent-green)';
     setTimeout(() => ($('copyBtn').style.color = ''), 1000);
+    showToast('Contract address copied to clipboard');
   });
 });
 
@@ -256,19 +317,22 @@ function renderAll(d) {
   $('tokenHeader').style.display  = 'flex';
   $('analysisGrid').style.display = 'flex';
 
+  _currentTokenData = d;
   renderTokenHeader(d);
+  // Refresh watchlist state so heart button reflects current status
+  _loadWatchlist();
   renderRiskScore(d);
   renderAlerts(d);
   renderPriceChart(d); // async, runs in background — chart appears after candles load
   renderWalletMap(d);
   renderActivity(d);
-  renderDistribution(d);
-  renderAllocation(d);
-  renderLaunchPattern(d);
-  renderWalletsTable(d);
-  renderAISummary(d);
-  renderHolderStats(d);
-  renderVolumeChart(d);
+  try { renderDistribution(d); } catch(e) { console.warn('renderDistribution:', e); }
+  try { renderAllocation(d); } catch(e) { console.warn('renderAllocation:', e); }
+  try { renderLaunchPattern(d); } catch(e) { console.warn('renderLaunchPattern:', e); }
+  try { renderWalletsTable(d); } catch(e) { console.warn('renderWalletsTable:', e); }
+  try { renderAISummary(d); } catch(e) { console.warn('renderAISummary:', e); }
+  try { renderHolderStats(d); } catch(e) { console.warn('renderHolderStats:', e); }
+  try { renderVolumeChart(d); } catch(e) { console.warn('renderVolumeChart:', e); }
 }
 
 /* ─── Token Header ────────────────────────────────────────────────────────── */
@@ -277,8 +341,10 @@ function renderTokenHeader(d) {
   const chainLabel = d.network || 'Unknown';
   $('tokenSymbol').textContent = (d.symbol || '?') + (d.quoteSymbol ? ' / ' + d.quoteSymbol : '');
   $('tokenNetworkLabel').textContent = chainLabel;
-  $('tokenVerified').style.display = d.verified ? 'inline-flex' : 'none';
-  if (d.verified && d.dexId) $('tokenVerified').title = `Listed on ${d.dexId}`;
+  const _dotColor = { solana:'#9945FF', ethereum:'#A78BFA', base:'#0052FF', bsc:'#F3BA2F', arbitrum:'#28A0F0', tron:'#FF0013', polygon:'#8247E5' }[(d.chain||'').toLowerCase()] || '#9945FF';
+  const _dotSvg = $('tokenNetwork')?.querySelector('svg');
+  if (_dotSvg) _dotSvg.style.fill = _dotColor;
+  _updateWatchlistBtn(d.address);
 
   // Token logo — real image or letter fallback
   const logo = $('tokenLogo');
@@ -306,8 +372,8 @@ function renderTokenHeader(d) {
     $('liqLock').textContent = 'No Liquidity';
     $('liqLock').className   = 'stat-change negative';
   } else {
-    $('liqLock').textContent = d.liquidityLocked ? 'Locked 100%' : 'Unlocked';
-    $('liqLock').className   = 'stat-change ' + (d.liquidityLocked ? 'positive' : 'negative');
+    $('liqLock').textContent = 'Unverified';
+    $('liqLock').className   = 'stat-change neutral';
   }
 
   // Volume 24h — always show a value
@@ -576,426 +642,384 @@ function connectWebSocket(contract, seedPrice) {
 }
 
 /* ─── Wallet Map (real holder addresses) ─────────────────────────────────── */
-function renderWalletMap(d) {
-  const container = $('walletMapContainer');
-  const linkEl    = $('bubblemapsLink');
-  if (!container) return;
-  if (linkEl) linkEl.style.display = 'none';
+function renderWalletMap(d) { renderHolderConcentration(d); renderWalletRelMap(d); }
 
-  const rel   = d.walletRelationships || {};
-  const nodes = rel.nodes || [];
-  if (!nodes.length) {
-    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#4a5068;font-size:12px">No holder data available</div>`;
+async function renderWalletRelMap(d) {
+  const canvas  = document.getElementById('walletRelMap');
+  const empty   = document.getElementById('walletRelMapEmpty');
+  const tooltip = document.getElementById('walletRelMapTooltip');
+  const stats   = document.getElementById('wrmStats');
+  if (!canvas) return;
+
+  // Show loading state
+  canvas.style.display = 'block';
+  if (empty) empty.style.display = 'none';
+  const ctx0 = canvas.getContext('2d');
+  const W0 = canvas.parentElement.clientWidth || 380, H0 = 300;
+  canvas.width = W0 * devicePixelRatio; canvas.height = H0 * devicePixelRatio;
+  canvas.style.width = W0 + 'px'; canvas.style.height = H0 + 'px';
+  ctx0.scale(devicePixelRatio, devicePixelRatio);
+  ctx0.fillStyle = '#6b7280'; ctx0.font = '11px monospace'; ctx0.textAlign = 'center';
+  ctx0.fillText('Loading wallet data…', W0/2, H0/2);
+
+  // Fetch real holder data
+  let wallets = [], edges = [];
+  const tokenAddr = d.address || document.getElementById('contractInput')?.value?.trim();
+  if (tokenAddr) {
+    try {
+      const chain = d.chain || 'solana';
+      const res = await fetch(`${API_BASE}/wallet-map/${encodeURIComponent(tokenAddr)}?chain=${chain}`);
+      const json = await res.json();
+      if (json.success && json.holders?.length) {
+        wallets = json.holders;
+        edges = json.edges || [];
+        if (stats) stats.dataset.liveEdges = json.liveEdges ? '1' : '0';
+      }
+    } catch(_) {}
+  }
+
+  // Fallback to potentialWallets if API failed
+  if (!wallets.length) {
+    wallets = (d.potentialWallets || []).filter(w => w.address).slice(0, 20).map((w, i) => ({
+      ...w, rank: i + 1,
+    }));
+  }
+
+  if (!wallets.length) {
+    canvas.style.display = 'none';
+    if (empty) { empty.style.display = 'flex'; }
     return;
   }
+  canvas.style.display = 'block';
+  if (empty) empty.style.display = 'none';
 
-  const W = container.clientWidth  || 560;
-  const H = container.clientHeight || 300;
-  // Center slightly above middle to give label space at bottom
-  const cx = W / 2, cy = H / 2 - 8;
-  // Elliptical orbit dimensions — use full canvas width, constrained by height
-  const MAX_ORBIT_X = W * 0.46;
-  const MAX_ORBIT_Y = (H - 50) * 0.48;
+  const W = canvas.parentElement.clientWidth  || 380;
+  const H = 240;
+  canvas.width  = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(devicePixelRatio, devicePixelRatio);
 
-  container.innerHTML = `<canvas id="walletCanvas" width="${W}" height="${H}" style="width:100%;height:100%;display:block;border-radius:8px;cursor:crosshair"></canvas>`;
-
-  // Tooltip lives on body so it's never clipped by overflow:hidden
-  let tooltip = document.getElementById('walletTooltip');
-  if (!tooltip) {
-    tooltip = document.createElement('div');
-    tooltip.id = 'walletTooltip';
-    tooltip.style.cssText = 'position:fixed;display:none;background:#1a1f2e;border:1px solid #2a3050;border-radius:6px;padding:8px 10px;font-size:11px;color:#e2e8f0;pointer-events:none;z-index:9999;min-width:160px;line-height:1.6;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
-    document.body.appendChild(tooltip);
-  }
-
-  const canvas = document.getElementById('walletCanvas');
-  const ctx     = canvas.getContext('2d');
-
-  const TYPE_COLOR = {
-    Team:      '#F0484B',
-    Insider:   '#F5A623',
-    Cluster:   '#8B5CF6',
-    Liquidity: '#27C97F',
-    Other:     '#4a90d9',
+  // Node color by type
+  const nodeColor = (w) => {
+    const t = (w.type || '').toLowerCase();
+    if (t === 'creator' || t === 'owner') return '#e86c3a';
+    if (t === 'program' || w.isPumpFun) return '#a855f7';    // purple for PumpFun/programs
+    if (t === 'whale') return '#f5a623';
+    if (t.includes('insider') || t.includes('team')) return '#ff6b8a';
+    if (t.includes('lp') || t.includes('dex') || t.includes('pool')) return '#27c97f';
+    if (t === 'trader') return '#60a5fa';
+    if (w.supplyPct > 1) return '#f5a623';
+    return '#4a90d9';
   };
 
-  const maxPct = Math.max(...nodes.map(n => n.supplyPct), 1);
-
-  // Center node
-  const centerNode = {
-    id: 'center', x: cx, y: cy, r: 22, isCenter: true,
-    label: rel.center || 'TOKEN', color: '#27C97F',
-    pulsePhase: 0,
-  };
-
-  // Holder nodes — start scattered from center, burst outward
-  const physNodes = nodes.map((n, i) => {
-    const angle = (i / nodes.length) * Math.PI * 2 + Math.random() * 0.4;
+  // Build nodes — spread in circle initially for stable layout
+  const nodes = wallets.map((w, i) => {
+    const angle = (i / wallets.length) * Math.PI * 2;
+    const spread = Math.min(W, H) * 0.3;
     return {
-      ...n,
-      x: cx + Math.cos(angle) * (25 + Math.random() * 20),
-      y: cy + Math.sin(angle) * (25 + Math.random() * 20),
-      vx: Math.cos(angle) * (2 + Math.random() * 3),
-      vy: Math.sin(angle) * (2 + Math.random() * 3),
-      r:  9 + (n.supplyPct / maxPct) * 22,
-      color: TYPE_COLOR[n.type] || TYPE_COLOR.Other,
-      pulsePhase: Math.random() * Math.PI * 2,
-      floatPhase: Math.random() * Math.PI * 2,
-      floatSpeed: 0.12 + Math.random() * 0.15,
-      floatAmp:   1.2 + Math.random() * 1.5,
-      // animated edge particles
-      particles: [],
+      x: W/2 + Math.cos(angle) * spread * (0.5 + Math.random() * 0.5),
+      y: H/2 + Math.sin(angle) * spread * (0.5 + Math.random() * 0.5),
+      vx: 0, vy: 0,
+      px: 0, py: 0, // pulse phase
+      w,
+      r: Math.max(6, Math.min(18, 6 + (w.supplyPct || 0) * 1.8)),
+      color: nodeColor(w),
+      phase: Math.random() * Math.PI * 2, // for breathing animation
     };
   });
 
-  const allNodes = [centerNode, ...physNodes];
-
-  const edges = (rel.edges || []).map(e => ({
-    source: allNodes.find(n => n.id === e.source),
-    target: allNodes.find(n => n.id === e.target),
-    weight: e.weight,
-    dashOffset: Math.random() * 20,
-  })).filter(e => e.source && e.target);
-
-  // Force sim state
-  let alpha = 1;
-  const ALPHA_DECAY = 0.012;
-  let t = 0; // global time for animations
-
-  function tick() {
-    // Repulsion
-    for (let i = 0; i < physNodes.length; i++) {
-      for (let j = i + 1; j < physNodes.length; j++) {
-        const a = physNodes[i], b = physNodes[j];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-        const minDist = a.r + b.r + 50;
-        if (dist < minDist) {
-          const f = (minDist - dist) / dist * 0.8 * alpha;
-          a.vx -= dx * f; a.vy -= dy * f;
-          b.vx += dx * f; b.vy += dy * f;
-        }
-      }
-      // Elliptical gravity — pull outward toward the canvas edge, wider X than Y
-      const n = physNodes[i];
-      const dx = n.x - cx, dy = n.y - cy;
-      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-      const nx = dx / dist, ny = dy / dist;
-      // Normalize position to ellipse — how far along the ellipse are we?
-      const ellipseDist = Math.sqrt((dx/MAX_ORBIT_X)**2 + (dy/MAX_ORBIT_Y)**2);
-      // Pull toward ellipse surface (outward if inside, inward if outside)
-      const strength = (1 - ellipseDist) * 0.09 * (alpha + 0.1);
-      n.vx += nx * strength * MAX_ORBIT_X;
-      n.vy += ny * strength * MAX_ORBIT_Y;
-    }
-
-    // Edge springs
-    edges.forEach(e => {
-      if (!e.source || !e.target || e.source.isCenter) return;
-      const dx = e.target.x - e.source.x, dy = e.target.y - e.source.y;
-      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-      const f = (dist - 70) / dist * 0.04 * alpha;
-      e.source.vx += dx * f; e.source.vy += dy * f;
-      e.target.vx -= dx * f; e.target.vy -= dy * f;
-    });
-
-    // Integrate + gentle float after settling
-    physNodes.forEach(n => {
-      if (alpha < 0.15) {
-        // Gentle floating drift after simulation settles
-        n.vx += Math.sin(t * n.floatSpeed + n.floatPhase) * n.floatAmp * 0.04;
-        n.vy += Math.cos(t * n.floatSpeed * 0.7 + n.floatPhase) * n.floatAmp * 0.04;
-      }
-      n.vx *= 0.82; n.vy *= 0.82;
-      n.x  += n.vx; n.y  += n.vy;
-      // Clamp to current canvas size (may change after resize)
-      const padX = n.r + 16;
-      const padY = n.r + 16;
-      n.x = Math.max(padX, Math.min(canvas.width  - padX, n.x));
-      n.y = Math.max(padY, Math.min(canvas.height - padY - 22, n.y));
-    });
-
-    alpha = Math.max(0, alpha - ALPHA_DECAY);
-    t += 0.012;
-  }
-
-  function hex2rgba(hex, a) {
-    const r = parseInt(hex.slice(1,3),16);
-    const g = parseInt(hex.slice(3,5),16);
-    const b = parseInt(hex.slice(5,7),16);
-    return `rgba(${r},${g},${b},${a})`;
-  }
-
-  function fmt$(v) {
-    if (!v) return '$0';
-    const abs = Math.abs(v);
-    const s = v < 0 ? '-$' : '$';
-    if (abs >= 1e6) return s + (abs/1e6).toFixed(1) + 'M';
-    if (abs >= 1e3) return s + (abs/1e3).toFixed(1) + 'K';
-    return s + abs.toFixed(0);
-  }
-
-  function drawEdge(e) {
-    const s = e.source.isCenter ? centerNode : e.source;
-    const t = e.target.isCenter ? centerNode : e.target;
-    if (!s || !t) return;
-    const col = t.color || '#4a5068';
-    const lw  = Math.max(0.5, Math.min(e.weight * 0.25, 2));
-
-    // Animated dashed line flowing toward center
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.lineTo(t.x, t.y);
-    ctx.strokeStyle = hex2rgba(col, 0.18);
-    ctx.lineWidth = lw;
-    ctx.stroke();
-
-    // Flowing dash overlay
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.lineTo(t.x, t.y);
-    ctx.strokeStyle = hex2rgba(col, 0.55);
-    ctx.lineWidth = lw;
-    ctx.setLineDash([5, 12]);
-    ctx.lineDashOffset = -(t * 18 % 17) - (e.dashOffset || 0);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }
-
-  function drawNode(n) {
-    const pulse = Math.sin(t * 1.8 + n.pulsePhase) * 0.5 + 0.5; // 0..1
-    const glowR = n.r + 4 + pulse * 8;
-
-    // Outer glow ring (pulsing)
-    const glow = ctx.createRadialGradient(n.x, n.y, n.r * 0.5, n.x, n.y, glowR + 6);
-    glow.addColorStop(0, hex2rgba(n.color, 0.28 + pulse * 0.18));
-    glow.addColorStop(1, hex2rgba(n.color, 0));
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, glowR + 6, 0, Math.PI * 2);
-    ctx.fillStyle = glow;
-    ctx.fill();
-
-    // Pulsing outer ring
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, glowR, 0, Math.PI * 2);
-    ctx.strokeStyle = hex2rgba(n.color, 0.12 + pulse * 0.25);
-    ctx.lineWidth = 1 + pulse * 1.5;
-    ctx.stroke();
-
-    // Main bubble fill — radial gradient (lighter center, darker edge)
-    const fill = ctx.createRadialGradient(n.x - n.r*0.3, n.y - n.r*0.3, 1, n.x, n.y, n.r);
-    fill.addColorStop(0, hex2rgba(n.color, 0.55));
-    fill.addColorStop(1, hex2rgba(n.color, 0.15));
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
-
-    // Border
-    ctx.strokeStyle = hex2rgba(n.color, 0.85);
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Shine highlight
-    const shine = ctx.createRadialGradient(n.x - n.r*0.35, n.y - n.r*0.35, 0, n.x - n.r*0.2, n.y - n.r*0.2, n.r * 0.55);
-    shine.addColorStop(0, 'rgba(255,255,255,0.22)');
-    shine.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.beginPath();
-    ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-    ctx.fillStyle = shine;
-    ctx.fill();
-
-    // % label
-    const fs = Math.max(8, Math.round(n.r * 0.52));
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${fs}px -apple-system,sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(n.supplyPct.toFixed(1) + '%', n.x, n.y);
-
-    // Address tag below
-    const fs2 = Math.max(7, Math.round(n.r * 0.36));
-    ctx.fillStyle = hex2rgba(n.color, 0.75);
-    ctx.font = `${fs2}px monospace`;
-    ctx.fillText(n.address, n.x, n.y + n.r + 10);
-  }
-
-  function drawCenter() {
-    const pulse = Math.sin(t * 2.2) * 0.5 + 0.5;
-    const glowR = centerNode.r + 6 + pulse * 10;
-
-    // Multi-ring pulse
-    [1.8, 1.3, 1].forEach((scale, ri) => {
-      ctx.beginPath();
-      ctx.arc(cx, cy, glowR * scale, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(39,201,127,${0.06 + (1-ri*0.3) * 0.08 * pulse})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    });
-
-    // Glow fill
-    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR + 10);
-    glow.addColorStop(0, 'rgba(39,201,127,0.35)');
-    glow.addColorStop(1, 'rgba(39,201,127,0)');
-    ctx.beginPath();
-    ctx.arc(cx, cy, glowR + 10, 0, Math.PI * 2);
-    ctx.fillStyle = glow;
-    ctx.fill();
-
-    // Bubble
-    const fill = ctx.createRadialGradient(cx - 7, cy - 7, 1, cx, cy, centerNode.r);
-    fill.addColorStop(0, 'rgba(39,201,127,0.75)');
-    fill.addColorStop(1, 'rgba(39,201,127,0.2)');
-    ctx.beginPath();
-    ctx.arc(cx, cy, centerNode.r, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.strokeStyle = '#27C97F';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Shine
-    const shine = ctx.createRadialGradient(cx - 7, cy - 7, 0, cx - 4, cy - 4, centerNode.r * 0.6);
-    shine.addColorStop(0, 'rgba(255,255,255,0.3)');
-    shine.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.beginPath();
-    ctx.arc(cx, cy, centerNode.r, 0, Math.PI * 2);
-    ctx.fillStyle = shine;
-    ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 9px -apple-system,sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(centerNode.label, cx, cy);
-  }
-
-  let resized = false;
-
-  function fitCanvasToContent() {
-    // Measure bounding box of all nodes including glow + label
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    physNodes.forEach(n => {
-      minX = Math.min(minX, n.x - n.r - 14);
-      minY = Math.min(minY, n.y - n.r - 14);
-      maxX = Math.max(maxX, n.x + n.r + 14);
-      maxY = Math.max(maxY, n.y + n.r + 22); // 22 for label below
-    });
-    // Include center node
-    minX = Math.min(minX, cx - centerNode.r - 14);
-    minY = Math.min(minY, cy - centerNode.r - 14);
-    maxX = Math.max(maxX, cx + centerNode.r + 14);
-    maxY = Math.max(maxY, cy + centerNode.r + 14);
-
-    const pad = 28;
-    const newW = Math.ceil(maxX - minX + pad * 2);
-    const newH = Math.ceil(maxY - minY + pad * 2);
-    const offX  = -(minX - pad);
-    const offY  = -(minY - pad);
-
-    // Shift all nodes
-    physNodes.forEach(n => { n.x += offX; n.y += offY; });
-    centerNode.x += offX; centerNode.y += offY;
-
-    // Resize canvas & container
-    canvas.width  = newW;
-    canvas.height = newH;
-    canvas.style.width  = '100%';
-    canvas.style.height = newH + 'px';
-    container.style.height = newH + 'px';
-
-    // Match activity card height to wallet map card
-    const mapCard = container.closest('.wallet-map-card') || container.parentElement;
-    const actCard = document.querySelector('.activity-card');
-    if (actCard && mapCard) {
-      // Let CSS flexbox handle it — just set the card to same height and scroll the list
-      const totalH = newH + 44 + 24; // canvas + card-header + card padding
-      actCard.style.height    = totalH + 'px';
-      actCard.style.overflow  = 'hidden';
-      actCard.style.display   = 'flex';
-      actCard.style.flexDirection = 'column';
-      const actList = document.getElementById('activityList');
-      if (actList) {
-        actList.style.flex      = '1';
-        actList.style.overflowY = 'auto';
-        actList.style.minHeight = '0';
+  // Fallback edges if backend returned none
+  if (!edges.length) {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i].w, b = nodes[j].w;
+        if ((a.type || '') === (b.type || '') && a.type) edges.push([i, j]);
+        else if (a.supplyPct > 0.5 && b.supplyPct > 0.5) edges.push([i, j]);
       }
     }
   }
 
+  // Cancel any previous animation loop on this canvas
+  if (canvas._wrmAnimId) cancelAnimationFrame(canvas._wrmAnimId);
+
+  // Each node gets its own slow drift target (Lissajous-style float)
+  nodes.forEach((n, i) => {
+    n.driftAx  = 0.7 + Math.random() * 0.6;   // drift amplitude x
+    n.driftAy  = 0.7 + Math.random() * 0.6;   // drift amplitude y
+    n.driftFx  = 0.0018 + Math.random() * 0.002; // frequency x (slower)
+    n.driftFy  = 0.0015 + Math.random() * 0.002; // frequency y (slower)
+    n.driftOx  = Math.random() * Math.PI * 2;  // phase offset x
+    n.driftOy  = Math.random() * Math.PI * 2;  // phase offset y
+    n.homeX    = n.x; // set after warm-up
+    n.homeY    = n.y;
+  });
+
+  const REPULSION = 1800, EDGE_LEN = 160, GRAVITY = 0.012, DAMPING = 0.82;
+  function tick(frame) {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
+        const d2 = dx*dx + dy*dy || 1, d = Math.sqrt(d2);
+        const minDist = nodes[i].r + nodes[j].r + 20;
+        const f = d < minDist ? REPULSION * 4 / d2 : REPULSION / d2;
+        const fx = f * dx / d, fy = f * dy / d;
+        nodes[i].vx -= fx; nodes[i].vy -= fy;
+        nodes[j].vx += fx; nodes[j].vy += fy;
+      }
+    }
+    edges.forEach(([i, j]) => {
+      if (!nodes[i] || !nodes[j]) return;
+      const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
+      const d = Math.sqrt(dx*dx + dy*dy) || 1;
+      const f = (d - EDGE_LEN) * 0.04;
+      const fx = f * dx / d, fy = f * dy / d;
+      nodes[i].vx += fx; nodes[i].vy += fy;
+      nodes[j].vx -= fx; nodes[j].vy -= fy;
+    });
+    nodes.forEach(n => {
+      // Soft gravity toward home + sinusoidal drift = continuous organic float
+      const tx = n.homeX + Math.sin(frame * n.driftFx + n.driftOx) * n.driftAx * 55;
+      const ty = n.homeY + Math.sin(frame * n.driftFy + n.driftOy) * n.driftAy * 45;
+      n.vx += (tx - n.x) * 0.008;
+      n.vy += (ty - n.y) * 0.008;
+      n.vx *= DAMPING; n.vy *= DAMPING;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(n.r + 6, Math.min(W - n.r - 6, n.x));
+      n.y = Math.max(n.r + 6, Math.min(H - n.r - 6, n.y));
+    });
+  }
+  // Warm-up without drift to settle positions
+  for (let i = 0; i < 200; i++) {
+    nodes.forEach(n => {
+      n.vx += (W/2 - n.x) * GRAVITY; n.vy += (H/2 - n.y) * GRAVITY;
+      n.vx *= 0.75; n.vy *= 0.75;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(n.r+6, Math.min(W-n.r-6, n.x));
+      n.y = Math.max(n.r+6, Math.min(H-n.r-6, n.y));
+    });
+    // repulsion during warmup
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i+1; j < nodes.length; j++) {
+        const dx = nodes[j].x-nodes[i].x, dy = nodes[j].y-nodes[i].y;
+        const d2 = dx*dx+dy*dy||1, d = Math.sqrt(d2);
+        const minD = nodes[i].r+nodes[j].r+20;
+        const f = d < minD ? REPULSION*4/d2 : REPULSION/d2;
+        nodes[i].vx -= f*dx/d; nodes[i].vy -= f*dy/d;
+        nodes[j].vx += f*dx/d; nodes[j].vy += f*dy/d;
+      }
+    }
+  }
+  // Lock home positions after settling
+  nodes.forEach(n => { n.homeX = n.x; n.homeY = n.y; n.vx = 0; n.vy = 0; });
+
+  let t = 0, frame = 0;
   function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    edges.forEach(drawEdge);
-    physNodes.forEach(drawNode);
-    drawCenter();
-  }
+    t += 0.018;
+    frame++;
+    tick(frame);
 
-  function loop() {
-    tick();
-    // Once simulation settles, fit canvas to content (once only)
-    if (!resized && alpha < 0.05) {
-      resized = true;
-      fitCanvasToContent();
-    }
-    draw();
-    window._walletMapRAF = requestAnimationFrame(loop);
-  }
+    ctx.clearRect(0, 0, W, H);
 
-  if (window._walletMapRAF) cancelAnimationFrame(window._walletMapRAF);
-  loop();
+    // Edges with animated gradient dash and glow
+    edges.forEach(([i, j, eType]) => {
+      if (!nodes[i] || !nodes[j]) return;
+      const nx = nodes[i], ny = nodes[j];
+      const dx = ny.x - nx.x, dy = ny.y - nx.y;
+      const d = Math.sqrt(dx*dx + dy*dy) || 1;
 
-  // Hover tooltip
-  canvas.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (W / rect.width);
-    const my = (e.clientY - rect.top)  * (H / rect.height);
-    let hit = null;
-    physNodes.forEach(n => {
-      const dx = mx - n.x, dy = my - n.y;
-      if (Math.sqrt(dx*dx+dy*dy) <= n.r + 6) hit = n;
+      // Glow line
+      ctx.beginPath();
+      ctx.moveTo(nx.x, nx.y);
+      ctx.lineTo(ny.x, ny.y);
+      const alpha = eType === 'traded' ? 0.35 : eType === 'created' ? 0.25 : 0.15;
+      const edgeColor = eType === 'traded' ? '#27c97f' : eType === 'created' ? '#e86c3a' : '#ffffff';
+      ctx.strokeStyle = edgeColor + Math.round(alpha * 255).toString(16).padStart(2,'0');
+      ctx.lineWidth = eType === 'traded' ? 1.5 : 1;
+      ctx.stroke();
+
+      // Animated particle travelling along the edge
+      const progress = ((t * 0.6 + (nodes[i].phase || 0)) % 1);
+      const px = nx.x + dx * progress, py = nx.y + dy * progress;
+      ctx.beginPath();
+      ctx.arc(px, py, 2, 0, Math.PI * 2);
+      ctx.fillStyle = edgeColor + 'cc';
+      ctx.fill();
     });
+
+    // Nodes with breathing glow
+    nodes.forEach(n => {
+      const breathe = Math.sin(t * 1.4 + n.phase) * 0.5 + 0.5; // 0..1
+      const glowR = n.r + 4 + breathe * 5;
+      const pulseAlpha = 0.08 + breathe * 0.12;
+
+      // Outer glow ring
+      const grd = ctx.createRadialGradient(n.x, n.y, n.r * 0.5, n.x, n.y, glowR);
+      grd.addColorStop(0, n.color + Math.round(pulseAlpha * 255).toString(16).padStart(2,'0'));
+      grd.addColorStop(1, n.color + '00');
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+
+      // Inner filled circle
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      const inner = ctx.createRadialGradient(n.x - n.r*0.3, n.y - n.r*0.3, 1, n.x, n.y, n.r);
+      inner.addColorStop(0, n.color + 'ff');
+      inner.addColorStop(1, n.color + 'aa');
+      ctx.fillStyle = inner;
+      ctx.fill();
+
+      // Border
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.strokeStyle = n.color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Label for large nodes
+      if (n.r >= 9) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.round(n.r * 0.7)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const label = (n.w.tag || n.w.type || '').slice(0, 4);
+        ctx.fillText(label, n.x, n.y);
+      }
+    });
+
+    canvas._wrmAnimId = requestAnimationFrame(draw);
+  }
+
+  // Stop animation when canvas leaves viewport (perf)
+  const _wrmObserver = new IntersectionObserver(entries => {
+    if (!entries[0].isIntersecting && canvas._wrmAnimId) {
+      cancelAnimationFrame(canvas._wrmAnimId);
+      canvas._wrmAnimId = null;
+    } else if (entries[0].isIntersecting && !canvas._wrmAnimId) {
+      draw();
+    }
+  });
+  _wrmObserver.observe(canvas);
+
+  draw();
+
+  // Stats
+  const insiders = wallets.filter(w => (w.type||'').toLowerCase().includes('insider')).length;
+  const whales   = wallets.filter(w => w.supplyPct > 1).length;
+  const isReal = wallets[0]?.isRealData;
+  if (stats) stats.innerHTML = `
+    <span>${wallets.length} wallets mapped</span>
+    <span style="color:#2d3144">·</span>
+    <span style="color:#ff6b8a">${insiders} insider${insiders!==1?'s':''}</span>
+    <span style="color:#2d3144">·</span>
+    <span style="color:#f5a623">${whales} whale${whales!==1?'s':''}</span>
+    <span style="color:#2d3144">·</span>
+    <span>${edges.length} connection${edges.length!==1?'s':''}</span>
+    <span style="color:#2d3144">·</span>
+    <span style="color:${stats?.dataset?.liveEdges==='1'?'#27c97f':'#6b7280'}">${stats?.dataset?.liveEdges==='1'?'● Live trades':'○ Estimated'}</span>
+  `;
+
+  // Tooltip on hover
+  canvas.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const hit = nodes.find(n => Math.hypot(n.x - mx, n.y - my) <= n.r + 4);
     if (hit) {
-      const riskColor = hit.riskScore >= 70 ? '#F0484B' : hit.riskScore >= 45 ? '#F5A623' : '#27C97F';
-      tooltip.innerHTML = `
-        <div style="color:${hit.color};font-weight:600;margin-bottom:4px">${hit.type} Wallet</div>
-        <div style="color:#8b92a8;font-size:10px;margin-bottom:6px">${hit.address}</div>
-        <div>Supply: <b style="color:${hit.color}">${hit.supplyPct.toFixed(2)}%</b></div>
-        <div>Risk: <b style="color:${riskColor}">${hit.riskScore}/100</b></div>
-        <div>Txns 7d: <b>${hit.txCount7d || '—'}</b></div>
-        <div>P&amp;L: <b style="color:${(hit.profitUsd||0)>=0?'#27C97F':'#F0484B'}">${fmt$(hit.profitUsd)}</b></div>
-        <div>First buy: <b>${hit.firstBuy || '—'}</b></div>
-        <div>Last active: <b>${hit.lastActive || '—'}</b></div>`;
-      // Fixed positioning = viewport coords, no clipping issues
-      let tx = e.clientX + 14;
-      let ty = e.clientY - 10;
-      if (tx + 185 > window.innerWidth)  tx = e.clientX - 195;
-      if (ty + 170 > window.innerHeight) ty = e.clientY - 175;
-      tooltip.style.left = tx + 'px';
-      tooltip.style.top  = ty + 'px';
+      const w = hit.w;
       tooltip.style.display = 'block';
-      canvas.style.cursor = 'pointer';
+      tooltip.style.left = (mx + 12) + 'px';
+      tooltip.style.top  = (my - 8) + 'px';
+      tooltip.innerHTML = `
+        <div style="color:${hit.color};font-weight:700;margin-bottom:2px">${w.tag || w.type || 'Holder'}</div>
+        <div style="color:#9ca3af;font-family:monospace;font-size:10px">${(w.address||'').slice(0,10)}…${(w.address||'').slice(-6)}</div>
+        ${w.supplyPct > 0 ? `<div style="margin-top:3px">Supply: <b>${w.supplyPct?.toFixed(2)}%</b></div>` : ''}
+        ${w.liqUsd ? `<div>Liquidity: <b>$${(w.liqUsd/1e6).toFixed(2)}M</b></div>` : ''}
+        ${w.vol24h ? `<div>Vol 24h: <b>$${(w.vol24h/1e6).toFixed(2)}M</b></div>` : ''}
+        ${w.buys || w.sells ? `<div style="color:#27c97f">B:${w.buys||0} <span style="color:#ff6b8a">S:${w.sells||0}</span></div>` : ''}
+      `;
     } else {
       tooltip.style.display = 'none';
-      canvas.style.cursor = 'crosshair';
     }
-  });
-
-  canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
-
-  canvas.addEventListener('click', e => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (W / rect.width);
-    const my = (e.clientY - rect.top)  * (H / rect.height);
-    physNodes.forEach(n => {
-      const dx = mx - n.x, dy = my - n.y;
-      if (Math.sqrt(dx*dx+dy*dy) <= n.r + 6 && n.solscanUrl) {
-        window.open(n.solscanUrl, '_blank');
-      }
-    });
-  });
+  };
+  canvas.onmouseleave = () => { if (tooltip) tooltip.style.display = 'none'; };
 }
+
+function renderHolderConcentration(d) {
+  const container = $('holderConcentrationContainer');
+  const badge     = $('holderConcentrationBadge');
+  if (!container) return;
+
+  const dist  = d.holderDistribution || {};
+  const stats = d.holderStats        || {};
+
+  if (dist.top10 == null && !stats.total) {
+    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:40px;color:#4a5068;font-size:12px">No holder data available</div>`;
+    return;
+  }
+
+  if (badge) badge.textContent = stats.total ? `${Number(stats.total).toLocaleString()} holders` : '';
+
+  const top10      = dist.top10 ?? 0;
+  const riskColor  = top10 >= 80 ? '#F0484B' : top10 >= 50 ? '#F5A623' : '#27C97F';
+  const riskLabel  = top10 >= 80 ? 'HIGH CONCENTRATION' : top10 >= 50 ? 'MODERATE' : 'HEALTHY';
+  const hasGTDist  = dist.top10 != null && dist.p11_20 != null;
+
+  // bar only renders if value is not null
+  const bar = (label, pct, color, sub = '') => {
+    if (pct == null) return '';
+    const w = Math.min(100, Math.max(0, parseFloat(pct)));
+    return `
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border-light)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <span style="font-size:11px;color:var(--text-muted)">${label}</span>
+          <div style="text-align:right">
+            <span style="font-size:12px;font-weight:700;color:${color}">${parseFloat(pct).toFixed(2)}%</span>
+            ${sub ? `<div style="font-size:9px;color:var(--text-muted)">${sub}</div>` : ''}
+          </div>
+        </div>
+        <div style="height:4px;background:var(--border-light);border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${w}%;background:${color};border-radius:2px;transition:width .6s ease"></div>
+        </div>
+      </div>`;
+  };
+
+  const stat = (label, value, color = 'var(--text-primary)') => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border-light)">
+      <span style="font-size:11px;color:var(--text-muted)">${label}</span>
+      <span style="font-size:11px;font-weight:600;color:${color}">${value}</span>
+    </div>`;
+
+  const src = hasGTDist ? 'GeckoTerminal' : 'DexScreener';
+
+  container.innerHTML = `
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px 6px;border-bottom:1px solid var(--border-light)">
+        <span style="font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase">Holder Tier Distribution · ${src}</span>
+        <span style="font-size:10px;font-weight:700;color:${riskColor}">${riskLabel}</span>
+      </div>
+
+      ${bar('Top 10 Wallets',    dist.top10,  top10 >= 50 ? '#F0484B' : '#F5A623', 'Source: ' + src)}
+      ${bar('Wallets #11–20',    dist.p11_20, '#8B5CF6', '')}
+      ${bar('Wallets #21–40',    dist.p21_40, '#4a90d9', '')}
+      ${bar('Remaining Holders', dist.rest,   '#27C97F', 'Public float')}
+      ${!hasGTDist ? `<div style="padding:8px 16px;font-size:10px;color:var(--text-muted)">Wallet #11–40 breakdown not available — GeckoTerminal data missing for this token.</div>` : ''}
+
+      ${dist.liquidity != null ? `
+      <div style="padding:6px 16px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border-light);margin-top:4px">Liquidity</div>
+      ${bar('LP Pool Holdings', dist.liquidity, '#27C97F', 'From DexScreener liquidityBase / totalSupply')}
+      ` : ''}
+
+      <div style="padding:6px 16px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border-light);margin-top:4px">Holder Stats</div>
+      ${stat('Total Holders',   stats.total ? Number(stats.total).toLocaleString() : '—')}
+      ${stats.whales != null ? stat('Whale Wallets (>1%)', stats.whales, stats.whales > 10 ? '#F0484B' : '#F5A623') : ''}
+      ${stats.concentration != null ? stat('Top 10 Concentration', `${stats.concentration.toFixed(2)}%`, stats.concentration > 60 ? '#F0484B' : '#27C97F') : ''}
+    </div>`;
+}
+
 
 /* ─── Activity ────────────────────────────────────────────────────────────── */
 const ACTIVITY_SVG = {
@@ -1054,7 +1078,6 @@ function renderActivityList(all) {
           ${a.desc}
         </div>
         <div class="activity-sub">${a.sub}</div>
-        ${walletHtml}
       </div>
       <div class="activity-meta">
         <span class="activity-time">${a.time}</span>
@@ -1070,11 +1093,16 @@ function renderDistribution(d) {
   if (distChart) { distChart.destroy(); distChart = null; }
 
   const hd     = d.holderDistribution || {};
-  const top10  = parseFloat(hd.top10  || 0);
-  const team   = parseFloat(hd.teamInsider || 0);
-  const liq    = parseFloat(hd.liquidity  || 0);
-  const pub    = parseFloat(hd.public     || 0);
-  const cex    = parseFloat(hd.cexMaker   || 0);
+  const hs     = d.holderStats || {};
+  // top10: prefer GT holderDist, fallback to holderStats concentration
+  const top10  = parseFloat(hd.top10 || hs.concentration || 0);
+  // team/insider: use teamInsider from hd, or estimate from creator if present
+  const team   = parseFloat(hd.teamInsider || hd.p11_20 || 0);
+  const liq    = parseFloat(hd.liquidity || 0);
+  // public: rest tier or remainder
+  const rawRest = parseFloat(hd.public || hd.rest || 0);
+  const pub    = rawRest || Math.max(0, parseFloat((100 - top10 - team - liq).toFixed(2)));
+  const cex    = parseFloat(hd.cexMaker || 0);
 
   const labels = ['Top 10 Wallets','Team / Insider','Liquidity','Public','CEX / Market Maker'];
   const values = [top10, team, liq, pub, cex];
@@ -1109,67 +1137,84 @@ function renderDistribution(d) {
 
 /* ─── Team/Insider Allocation (real data) ────────────────────────────────── */
 function renderAllocation(d) {
-  const sym      = d.symbol || '';
-  const supply   = d.totalSupply || 0;
-  const holders  = d.potentialWallets || [];
-  const teamWals = holders.filter(h => h.type === 'Team');
-  const insWals  = holders.filter(h => h.type === 'Insider');
-  const clsWals  = holders.filter(h => h.type === 'Cluster');
-  const liqWals  = holders.filter(h => h.type === 'Liquidity');
-  const teamAlloc= teamWals.reduce((s,h) => s+(h.allocation||0), 0);
-  const insAlloc = insWals.reduce((s,h) => s+(h.allocation||0), 0);
-  const clsAlloc = clsWals.reduce((s,h) => s+(h.allocation||0), 0);
-  const liqAlloc = liqWals.reduce((s,h) => s+(h.allocation||0), 0);
-  const totalIns = teamAlloc + insAlloc;
-  const totalConcentrated = totalIns + clsAlloc;
-  const teamPct  = supply > 0 ? teamAlloc/supply*100 : 0;
-  const insPct   = supply > 0 ? insAlloc/supply*100  : 0;
-  const clsPct   = supply > 0 ? clsAlloc/supply*100  : 0;
-  const liqPct   = supply > 0 ? liqAlloc/supply*100  : 0;
-  const totalInsPct = teamPct + insPct;
-  const unlockedPct = totalInsPct.toFixed(2);
+  renderSecurity(d);
+}
 
-  function bar(pct, color) {
-    const w = Math.min(Math.max(pct, 0), 100).toFixed(1);
-    return `<div class="alloc-bar-bg"><div class="alloc-bar-fill" style="width:${w}%;background:${color}"></div></div>`;
-  }
-  function riskTag(pct, thHigh, thMed) {
-    if (pct >= thHigh) return '<span class="alloc-risk-tag danger">HIGH RISK</span>';
-    if (pct >= thMed)  return '<span class="alloc-risk-tag warn">MEDIUM</span>';
-    return '<span class="alloc-risk-tag safe">LOW</span>';
+function renderSecurity(d) {
+  const el     = $('securityDetails');
+  const badge  = $('securityBadge');
+  if (!el) return;
+
+  const sec = d.security;
+  console.log('[renderSecurity] sec=', sec, 'from d.security');
+  if (!sec) {
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No security data available</div>`;
+    return;
   }
 
-  const rows = [
-    { label:'Team Wallets (Identified)',   count:teamWals.length, val:fmt.token(teamAlloc,sym), pct:teamPct,    color:'#F0484B', thH:10, thM:5 },
-    { label:'Potential Insider Wallets',   count:insWals.length,  val:fmt.token(insAlloc,sym),  pct:insPct,     color:'#FF8C42', thH:5,  thM:2 },
-    { label:'Cluster / Related Wallets',   count:clsWals.length,  val:fmt.token(clsAlloc,sym),  pct:clsPct,     color:'#F5A623', thH:8,  thM:3 },
-    { label:'Liquidity Pool Tokens',       count:liqWals.length,  val:fmt.token(liqAlloc,sym),  pct:liqPct,     color:'#4A90E2', thH:50, thM:20 },
-    { label:'Total Insider Allocation',    count:teamWals.length+insWals.length, val:fmt.token(totalIns,sym), pct:totalInsPct, color:'#F0484B', thH:20, thM:10 },
-    { label:'Unlocked / No Vesting',       count:null,            val:fmt.token(totalIns,sym),  pct:parseFloat(unlockedPct), color:'#F0484B', thH:20, thM:10 },
-    { label:'Vesting / Locked',            count:null,            val:'0',                       pct:0,          color:'#27C97F', thH:100, thM:100 },
-  ];
+  const isSolana = (d.geckoNetwork || 'solana') === 'solana';
 
-  $('allocationTable').innerHTML = rows.map(r => `
-    <div class="alloc-row-v2">
-      <div class="alloc-row-top">
-        <span class="alloc-key">${r.label}${r.count !== null ? ` <span style="color:var(--text-muted);font-weight:400">(${r.count})</span>` : ''}</span>
-        <div class="alloc-right">
-          <span class="alloc-val">${r.val}</span>
-          <span class="alloc-pct" style="color:${r.color}">${r.pct.toFixed(2)}%</span>
-          ${riskTag(r.pct, r.thH, r.thM)}
-        </div>
+  // Determine overall security level
+  const risks = [sec.isHoneypot, sec.cannotBuy, sec.isMintable, sec.isProxy, !sec.isOpenSource].filter(Boolean).length;
+  const overallColor = risks === 0 ? '#27C97F' : risks <= 1 ? '#F5A623' : '#F0484B';
+  const overallLabel = risks === 0 ? 'SAFE' : risks <= 1 ? 'CAUTION' : 'RISKY';
+  if (badge) { badge.textContent = overallLabel; badge.style.color = overallColor; badge.style.fontWeight = '700'; }
+
+  const row = (label, value, color = 'var(--text-primary)', sub = '') => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;border-bottom:1px solid var(--border-light)">
+      <span style="font-size:11px;color:var(--text-muted)">${label}</span>
+      <div style="text-align:right">
+        <span style="font-size:11px;color:${color};font-weight:600">${value}</span>
+        ${sub ? `<div style="font-size:9px;color:var(--text-muted);margin-top:1px">${sub}</div>` : ''}
       </div>
-      ${bar(r.pct, r.color)}
-    </div>`).join('');
+    </div>`;
 
-  const warn = $('allocWarning');
-  if (warn) {
-    warn.style.display = totalInsPct > 15 ? 'flex' : 'none';
-    if (totalInsPct > 15) {
-      warn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-        Team/Insider wallets hold <strong>${totalInsPct.toFixed(1)}%</strong> — ${totalInsPct>30?'Critical rug pull risk':'Elevated concentration risk'}`;
-    }
-  }
+  const bool = (v, trueLabel = 'YES', falseLabel = 'NO', trueIsBad = true) => {
+    const isTrue = !!v;
+    const color  = isTrue === trueIsBad ? '#F0484B' : '#27C97F';
+    return `<span style="color:${color};font-weight:700">${isTrue ? trueLabel : falseLabel}</span>`;
+  };
+
+  const pct = v => `${parseFloat(v || 0).toFixed(2)}%`;
+  const explorerBase = { solana:'https://solscan.io/account/', eth:'https://etherscan.io/address/', bsc:'https://bscscan.com/address/', base:'https://basescan.org/address/', arbitrum:'https://arbiscan.io/address/' }[sec.chain || 'solana'] || 'https://etherscan.io/address/';
+
+  const lpRows = (sec.lpHolders || []).map((h, i) => {
+    const short = h.address ? h.address.slice(0,6)+'…'+h.address.slice(-4) : '—';
+    const lockColor = h.locked ? '#27C97F' : '#F5A623';
+    const lockLabel = h.locked ? '🔒 Locked' : 'Unlocked';
+    return row(
+      `LP Holder #${i+1}`,
+      `${pct(h.pct)} ${h.tag ? `<span style="color:var(--text-muted);font-weight:400">(${h.tag})</span>` : ''}`,
+      lockColor,
+      `<a href="${explorerBase}${h.address}" target="_blank" style="color:var(--accent-blue);text-decoration:none;font-family:monospace">${short}</a> · ${lockLabel}`
+    );
+  }).join('');
+
+  el.innerHTML = `
+    <div>
+      ${row('Honeypot',       bool(sec.isHoneypot, 'YES ⚠', 'NO'))}
+      ${!isSolana ? row('Open Source',    bool(!sec.isOpenSource, 'NO ⚠', 'YES', true)) : ''}
+      ${!isSolana ? row('Proxy Contract', bool(sec.isProxy, 'YES ⚠', 'NO')) : ''}
+      ${!isSolana ? row('Cannot Buy',     bool(sec.cannotBuy, 'YES ⚠', 'NO')) : ''}
+      ${row('Mintable',       bool(sec.isMintable, 'YES ⚠', 'NO'))}
+      ${isSolana  ? row('Freezable',      bool(sec.isFreezable, 'YES ⚠', 'NO')) : ''}
+      ${isSolana  ? row('Metadata Mutable', bool(sec.metadataMutable, 'YES ⚠', 'NO')) : ''}
+      <div style="padding:6px 16px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border-light);margin-top:4px">Tax</div>
+      ${row('Buy Tax',  pct(sec.buyTax),  sec.buyTax  > 5 ? '#F0484B' : '#27C97F')}
+      ${row('Sell Tax', pct(sec.sellTax), sec.sellTax > 5 ? '#F0484B' : '#27C97F')}
+      ${!isSolana && sec.transferTax ? row('Transfer Tax', pct(sec.transferTax), sec.transferTax > 0 ? '#F5A623' : '#27C97F') : ''}
+      <div style="padding:6px 16px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border-light);margin-top:4px">Liquidity</div>
+      ${lpRows || row('LP Holders', 'No data', 'var(--text-muted)')}
+      ${!isSolana ? row('LP Holder Count', sec.lpHolderCount || '—', 'var(--text-primary)') : ''}
+      ${!isSolana && sec.isInCex ? row('Listed on CEX', sec.cexList?.join(', ') || 'Yes', '#27C97F') : ''}
+      <div style="padding:6px 16px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase;border-bottom:1px solid var(--border-light);margin-top:4px">Creator</div>
+      ${sec.creatorAddress ? row('Creator Address',
+          `<a href="${explorerBase}${sec.creatorAddress}" target="_blank" style="color:var(--accent-blue);text-decoration:none;font-family:monospace;font-size:10px">${sec.creatorAddress.slice(0,8)}…${sec.creatorAddress.slice(-6)}</a>`,
+          'var(--text-primary)',
+          sec.creatorMalicious ? '⚠ Flagged as malicious' : (sec.creatorPercent > 0 ? `Holds ${pct(sec.creatorPercent)} of supply` : '')
+        ) : row('Creator', '—', 'var(--text-muted)')}
+      <div style="padding:6px 16px 4px;font-size:9px;color:var(--text-muted)">Source: GoPlus Security API</div>
+    </div>`;
 }
 
 /* ─── Launch Pattern (real data) ─────────────────────────────────────────── */
@@ -1197,24 +1242,31 @@ function renderLaunchPattern(d) {
     </div>`).join('');
 }
 
-/* ─── Potential Wallets Table (real Solana RPC data) ─────────────────────── */
+/* ─── Potential Wallets Table ─────────────────────────────────────────────── */
 let _walletFilter = 'all';
-function renderWalletsTable(d) {
-  const wallets = d.potentialWallets || [];
+let _walletData   = [];
+let _walletSymbol = '';
 
-  // Wire filter button
+function renderWalletsTable(d) {
+  _walletData   = d.potentialWallets || [];
+  _walletSymbol = d.symbol || '';
+  _walletFilter = 'all'; // reset filter on new token scan
+
+  // Re-wire filter button (remove old listener by replacing the node)
   const filterBtn = document.querySelector('.filter-btn');
-  if (filterBtn && !filterBtn._wired) {
-    filterBtn._wired = true;
-    filterBtn.addEventListener('click', () => {
-      const types = ['all','Team','Insider','Cluster','Liquidity'];
+  if (filterBtn) {
+    const newBtn = filterBtn.cloneNode(true);
+    filterBtn.parentNode.replaceChild(newBtn, filterBtn);
+    newBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg> Filter`;
+    newBtn.addEventListener('click', () => {
+      const types = ['all','Top Holder','Holder','Whale','Liquidity'];
       _walletFilter = types[(types.indexOf(_walletFilter)+1) % types.length];
-      filterBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg> ${_walletFilter === 'all' ? 'Filter' : _walletFilter}`;
-      renderWalletRows(wallets, d.symbol);
+      newBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg> ${_walletFilter === 'all' ? 'Filter' : _walletFilter}`;
+      renderWalletRows(_walletData, _walletSymbol);
     });
   }
 
-  renderWalletRows(wallets, d.symbol);
+  renderWalletRows(_walletData, _walletSymbol);
   const vaw = $('viewAllWallets'); if (vaw) vaw.style.display = 'none';
 }
 
@@ -1225,9 +1277,9 @@ function renderWalletRows(wallets, symbol) {
     return;
   }
 
-  const TYPE_COLOR = { Team:'#F0484B', Insider:'#FF8C42', Cluster:'#F5A623', Liquidity:'#4A90E2', Other:'#8b92a8' };
+  const TYPE_COLOR = { Team:'#F0484B', Insider:'#FF8C42', 'Early Buyer':'#FF8C42', Cluster:'#F5A623', Liquidity:'#4A90E2', Whale:'#8B5CF6', Holder:'#27C97F', 'Top Holder':'#27C97F', Trader:'#4A90E2', Other:'#8b92a8' };
 
-  $('walletsTable').innerHTML = filtered.slice(0, 12).map(w => {
+  $('walletsTable').innerHTML = filtered.slice(0, 50).map((w, idx) => {
     const riskColor  = w.riskScore >= 70 ? '#F0484B' : w.riskScore >= 45 ? '#F5A623' : '#27C97F';
     const riskLabel  = w.riskScore >= 70 ? 'HIGH' : w.riskScore >= 45 ? 'MED' : 'LOW';
     const typeColor  = TYPE_COLOR[w.type] || TYPE_COLOR.Other;
@@ -1235,38 +1287,92 @@ function renderWalletRows(wallets, symbol) {
       const h = Math.max(3, Math.abs(v) * 16);
       return `<div class="mini-bar" style="height:${h}px;background:${v>=0?'#27C97F':'#F0484B'}"></div>`;
     }).join('');
-    const shortA   = w.shortAddr || (w.address||'?').slice(0,4)+'...'+(w.address||'').slice(-4);
-    const allocFmt = w.allocation > 0 ? fmt.token(w.allocation, symbol) : 'N/A';
-    const profitFmt = w.profitUsd != null
-      ? `<span style="color:${w.profitUsd>=0?'#27C97F':'#F0484B'}">${w.profitUsd>=0?'+':''}$${Math.abs(w.profitUsd)>=1000?(Math.abs(w.profitUsd)/1000).toFixed(1)+'K':Math.abs(w.profitUsd).toFixed(0)}</span>`
-      : '—';
     const fullAddr   = w.address || '';
-    const validAddr  = fullAddr.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(fullAddr);
+    const isSolAddr  = fullAddr.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(fullAddr);
+    const isEVMAddr  = /^0x[0-9a-fA-F]{40}$/.test(fullAddr);
+    const validAddr  = isSolAddr || isEVMAddr;
     const solscanUrl = validAddr ? (w.solscanUrl || `https://solscan.io/account/${fullAddr}`) : null;
+    const isReal    = w.isRealData === true;
+    const isLiqPool = w.isLiqPool === true;
+    const fmtUsd    = v => v >= 1000000 ? `$${(v/1000000).toFixed(2)}M` : v >= 1000 ? `$${(v/1000).toFixed(1)}K` : `$${Math.round(v)}`;
+
+    // Allocation column: liq pool shows Liq + Vol; trader shows B/S vol
+    let allocLine1, allocLine2;
+    if (isLiqPool) {
+      allocLine1 = `<span style="color:#4A90E2">Liq: ${fmtUsd(w.liqUsd||0)}</span>`;
+      allocLine2 = `Vol: ${fmtUsd(w.vol24h||0)} (${(w.volPct||0).toFixed(0)}%)`;
+    } else if (w.buyVol != null) {
+      allocLine1 = `<span style="color:#27C97F">B:${fmtUsd(w.buyVol||0)}</span> <span style="color:#F0484B">S:${fmtUsd(w.sellVol||0)}</span>`;
+      allocLine2 = `Vol: ${fmtUsd((w.buyVol||0)+(w.sellVol||0))}`;
+    } else {
+      const estMark = w.isEstimated ? '~' : '';
+      allocLine1 = w.allocation > 0 ? `${estMark}${fmt.token(w.allocation||0, symbol)}` : `<span style="color:#6b7280">—</span>`;
+      allocLine2 = w.supplyPct > 0 ? `${estMark}${(w.supplyPct||0).toFixed(2)}%` : `<span style="color:#6b7280">${w.txCount7d ? w.txCount7d+' txns' : '—'}</span>`;
+    }
+
+    // Buy/Sell ratio for liq pools
+    const buyVolNum  = w.buyVol || 0;
+    const sellVolNum = w.sellVol || 0;
+    const volTotal   = buyVolNum + sellVolNum;
+    const buySellBar = isLiqPool && volTotal > 0
+      ? `<div style="display:flex;gap:2px;margin-top:3px;height:3px;border-radius:2px;overflow:hidden;width:60px">
+           <div style="background:#27C97F;flex:${buyVolNum}"></div>
+           <div style="background:#F0484B;flex:${sellVolNum}"></div>
+         </div>`
+      : '';
+
+    // DEX label for liq pools
+    const dexLabel = isLiqPool && w.dexId
+      ? `<span style="font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">${w.dexId}</span>`
+      : '';
+
+    // Address display
+    const addrDisplay = validAddr
+      ? `<span class="wallet-full-addr">${fullAddr.slice(0,22)}<wbr>${fullAddr.slice(22)}</span>`
+      : `<span class="wallet-full-addr" style="color:var(--text-muted)">Estimated</span>`;
+
+    const txFmt       = w.txCount7d != null ? `${w.txCount7d} txns` : '<span style="color:var(--text-muted)">—</span>';
+    const firstBuyFmt = w.firstBuy  || '<span style="color:var(--text-muted)">—</span>';
+    const lastActFmt  = w.lastActive || '<span style="color:var(--text-muted)">—</span>';
+
+    const dataBadge = isReal
+      ? `<span class="wallet-data-badge real" title="Real on-chain data">● Live</span>`
+      : `<span class="wallet-data-badge est" title="Estimated">~ Est.</span>`;
 
     return `
-      <div class="wallet-row-v2">
+      <div class="wallet-row-v2" id="wrow_${idx}">
         <div class="wallet-col-addr">
-          <span class="wallet-risk-dot" style="background:${riskColor}"></span>
-          ${solscanUrl
-            ? `<a href="${solscanUrl}" target="_blank" class="wallet-addr-link" title="${fullAddr}">${shortA}</a>`
-            : `<span class="wallet-addr-link" title="${fullAddr}" style="cursor:default">${shortA}</span>`}
+          <div style="display:flex;align-items:center;gap:5px;min-width:0">
+            <span class="wallet-risk-dot" style="background:${riskColor};flex-shrink:0"></span>
+            <div style="min-width:0;flex:1">
+              ${solscanUrl
+                ? `<a href="${solscanUrl}" target="_blank" class="wallet-addr-full" title="${fullAddr}">${addrDisplay}</a>`
+                : addrDisplay}
+              <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+                ${dataBadge}
+                ${dexLabel}
+                ${validAddr ? `<button class="wallet-copy-btn" onclick="(function(e){e.stopPropagation();navigator.clipboard.writeText('${fullAddr}').then(()=>showToast('Wallet address copied'));})( event)" title="Copy address">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>` : ''}
+              </div>
+            </div>
+          </div>
         </div>
         <div class="wallet-col-type">
           <span class="wallet-type-badge-v2" style="background:${typeColor}22;color:${typeColor};border:1px solid ${typeColor}44">${w.type||'Other'}</span>
         </div>
         <div class="wallet-col-alloc">
-          <div class="wallet-alloc-val">${allocFmt}</div>
-          <div class="wallet-alloc-pct">${(w.supplyPct||0).toFixed(2)}%</div>
+          <div class="wallet-alloc-val" style="font-size:10px">${allocLine1}</div>
+          <div class="wallet-alloc-pct">${allocLine2}</div>
+          ${buySellBar}
         </div>
         <div class="wallet-col-activity">
           <div class="mini-chart">${bars}</div>
-          <div class="wallet-tx-count">${w.txCount7d||0} txns/7d</div>
+          <div class="wallet-tx-count">${txFmt}</div>
         </div>
-        <div class="wallet-col-profit">${profitFmt}</div>
         <div class="wallet-col-meta">
-          <div class="wallet-first-buy">Entry: ${w.firstBuy||'?'}</div>
-          <div class="wallet-last-active">Active: ${w.lastActive||'?'}</div>
+          <div class="wallet-first-buy">Entry: ${firstBuyFmt}</div>
+          <div class="wallet-last-active">Active: ${lastActFmt}</div>
         </div>
         <div class="wallet-col-risk">
           <span class="risk-badge-v2" style="background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44">${w.riskScore||'?'}</span>
@@ -1279,9 +1385,9 @@ function renderWalletRows(wallets, symbol) {
 /* ─── AI Summary ──────────────────────────────────────────────────────────── */
 function renderAISummary(d) {
   const ai = d.aiSummary || {};
-  $('aiConfidence').textContent = Math.round(ai.confidence || d.confidence || 0);
-  $('aiVerdict').textContent    = ai.verdict || 'Analysis unavailable.';
-  $('findingsList').innerHTML   = (ai.findings || []).map(f => `<li>${f}</li>`).join('');
+  if ($('aiConfidence')) $('aiConfidence').textContent = Math.round(ai.confidence || d.confidence || 0);
+  if ($('aiVerdict'))    $('aiVerdict').textContent    = ai.verdict || 'Analysis unavailable.';
+  if ($('findingsList')) $('findingsList').innerHTML   = (ai.findings || []).map(f => `<li>${f}</li>`).join('');
 }
 
 /* ─── Holder Stats ────────────────────────────────────────────────────────── */
@@ -1448,7 +1554,7 @@ $('exportBtn').addEventListener('click', () => {
   a.download = `bloomberg-${currentData.symbol}-${Date.now()}.txt`;
   a.click(); URL.revokeObjectURL(a.href);
 });
-$('generateReportBtn').addEventListener('click', () => $('exportBtn').click());
+$('generateReportBtn')?.addEventListener('click', () => $('exportBtn').click());
 
 /* ─── Trending ────────────────────────────────────────────────────────────── */
 async function loadTrending() {
@@ -1465,8 +1571,190 @@ async function loadTrending() {
   }
 }
 
+/* ─── Wallet Tracker ──────────────────────────────────────────────────────── */
+(function initWalletTracker() {
+  const inp        = () => $('wtInput');
+  const scanBtn    = () => $('wtScanBtn');
+  const copyBtn    = () => $('wtCopyBtn');
+  const chainSel   = () => $('wtChainSelect');
+  const detectEl   = () => $('wtChainDetect');
+  const content    = () => $('wtContent');
+  const empty      = () => $('wtEmpty');
+  const loading    = () => $('wtLoading');
+  const loadingMsg = () => $('wtLoadingMsg');
+
+  function isEvm(addr)    { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
+  function isSolana(addr) { return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr) && !isEvm(addr); }
+
+  function onInput() {
+    const val = (inp()?.value || '').trim();
+    if (isEvm(val)) {
+      detectEl().textContent = '⬡ EVM address detected — select chain below';
+      detectEl().style.color = '#4a90d9';
+      if (chainSel()) chainSel().style.display = 'block';
+    } else if (isSolana(val)) {
+      detectEl().textContent = '◎ Solana address detected';
+      detectEl().style.color = '#27C97F';
+      if (chainSel()) chainSel().style.display = 'none';
+    } else {
+      detectEl().textContent = val.length > 5 ? '⚠ Unrecognized address format' : '';
+      detectEl().style.color = '#F5A623';
+      if (chainSel()) chainSel().style.display = 'none';
+    }
+  }
+
+  function show(id) {
+    ['wtContent','wtEmpty','wtLoading'].forEach(i => { const el = $(i); if (el) el.style.display = 'none'; });
+    const el = $(id);
+    if (el) el.style.display = id === 'wtContent' ? 'block' : 'flex';
+  }
+
+  const fmtUsd = v => !v ? '$0' : v >= 1e6 ? `$${(v/1e6).toFixed(2)}M` : v >= 1e3 ? `$${(v/1e3).toFixed(1)}K` : `$${v.toFixed(2)}`;
+  const fmtNum = v => !v ? '0' : v >= 1e6 ? `${(v/1e6).toFixed(2)}M` : v >= 1e3 ? `${(v/1e3).toFixed(1)}K` : parseFloat(v).toFixed(4);
+  const timeAgo = ts => { const s=(Date.now()-ts)/1000; return s<60?`${Math.round(s)}s ago`:s<3600?`${Math.round(s/60)}m ago`:s<86400?`${Math.round(s/3600)}h ago`:`${Math.round(s/86400)}d ago`; };
+
+  function renderSummary(data) {
+    const el = $('wtSummary');
+    if (!el) return;
+    const chain = data.chain === 'solana' ? 'Solana' : (data.evmChain||'EVM').charAt(0).toUpperCase()+(data.evmChain||'evm').slice(1);
+    const chainColor = data.chain === 'solana' ? '#9945FF' : '#4a90d9';
+    el.innerHTML = [
+      { label:'Total Value',  value: fmtUsd(data.totalUsd), color:'#27C97F' },
+      { label:'Network',      value: chain,                  color: chainColor },
+      { label:'Tokens',       value: data.tokens?.length || 0, color:'var(--text-primary)' },
+      { label:'Transactions', value: data.txs?.length || 0,    color:'var(--text-primary)' },
+    ].map(s => `
+      <div class="card" style="padding:14px 16px">
+        <div style="font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">${s.label}</div>
+        <div style="font-size:18px;font-weight:700;color:${s.color}">${s.value}</div>
+      </div>`).join('');
+  }
+
+  function renderHoldings(tokens, chain) {
+    const el = $('wtHoldings');
+    if (!el) return;
+    if ($('wtHoldingCount')) $('wtHoldingCount').textContent = `${tokens.length} tokens`;
+    if (!tokens.length) { el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No token holdings found</div>`; return; }
+
+    const explorerBase = chain === 'solana' ? 'https://solscan.io/token/' : 'https://etherscan.io/token/';
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 80px 90px 80px;padding:6px 12px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--border-light)">
+        <span>TOKEN</span><span style="text-align:right">BALANCE</span><span style="text-align:right">PRICE</span><span style="text-align:right">VALUE</span>
+      </div>
+      ${tokens.map(t => {
+        const pct = tokens[0]?.valueUsd > 0 ? (t.valueUsd / tokens.reduce((s,x)=>s+x.valueUsd,0)*100) : 0;
+        const addr = t.mint || t.address || '';
+        return `
+        <div style="display:grid;grid-template-columns:1fr 80px 90px 80px;padding:8px 12px;border-bottom:1px solid var(--border-light);align-items:center">
+          <div>
+            <div style="font-size:11px;font-weight:600;color:var(--text-primary)">${t.symbol}</div>
+            <div style="font-size:9px;color:var(--text-muted)">${t.name}</div>
+            <div style="height:2px;background:var(--border-light);border-radius:1px;margin-top:3px;width:60px">
+              <div style="height:100%;width:${Math.min(100,pct)}%;background:#27C97F;border-radius:1px"></div>
+            </div>
+          </div>
+          <span style="text-align:right;font-size:10px;color:var(--text-primary)">${fmtNum(t.balance)}</span>
+          <span style="text-align:right;font-size:10px;color:var(--text-muted)">${t.priceUsd>0?'$'+t.priceUsd.toFixed(t.priceUsd<0.001?8:t.priceUsd<1?6:4):'—'}</span>
+          <span style="text-align:right;font-size:11px;font-weight:600;color:${t.valueUsd>0?'#27C97F':'var(--text-muted)'}">${fmtUsd(t.valueUsd)}</span>
+        </div>`;
+      }).join('')}`;
+  }
+
+  let _allTxs = [], _txChain = 'solana', _txNextCursor = null, _txAddress = '';
+
+  function renderTxHistory(txs, chain, nextCursor = null, address = '') {
+    _allTxs = txs; _txChain = chain; _txNextCursor = nextCursor; _txAddress = address;
+    _renderTxRows();
+  }
+
+  function _txRow(tx) {
+    const txBase = { solana:'https://solscan.io/tx/', ethereum:'https://etherscan.io/tx/', base:'https://basescan.org/tx/', bsc:'https://bscscan.com/tx/', arbitrum:'https://arbiscan.io/tx/' };
+    const explorer = txBase[_txChain] || txBase.ethereum;
+    const TYPE_COLOR = { Send:'#F0484B', Receive:'#27C97F', Swap:'#F5A623', Transfer:'#4a90d9' };
+    const hash   = tx.signature || tx.hash || '';
+    const color  = TYPE_COLOR[tx.type] || '#8b92a8';
+    const valStr = tx.value > 0 ? fmtUsd(tx.value * (_txChain==='solana'?150:3000)) : (tx.amtOut > 0 ? fmtNum(tx.amtOut) : '—');
+    const detail = tx.type === 'Swap'
+      ? `${fmtNum(tx.amtOut)} → ${fmtNum(tx.amtIn)}`
+      : (tx.to ? tx.to.slice(0,6)+'…'+tx.to.slice(-4) : tx.short || '—');
+    return `<div style="display:grid;grid-template-columns:60px 1fr 80px 70px 36px;padding:7px 12px;border-bottom:1px solid var(--border-light);align-items:center">
+      <span style="font-size:10px;font-weight:700;color:${color}">${tx.type}</span>
+      <span style="font-size:9px;color:var(--text-muted);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${detail}</span>
+      <span style="text-align:right;font-size:10px;color:var(--text-primary)">${valStr}</span>
+      <span style="text-align:right;font-size:9px;color:var(--text-muted)">${timeAgo(tx.timestamp)}</span>
+      <span style="text-align:right">${hash ? `<a href="${explorer}${hash}" target="_blank" style="color:var(--text-muted);font-size:10px;text-decoration:none">↗</a>` : ''}</span>
+    </div>`;
+  }
+
+  function _renderTxRows() {
+    const el = $('wtTxList');
+    if (!el) return;
+    if ($('wtTxCount')) $('wtTxCount').textContent = 'Top 10';
+    const top10 = _allTxs.slice(0, 10);
+    if (!top10.length) {
+      el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No transactions found</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:60px 1fr 80px 70px 36px;padding:6px 12px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--border-light)">
+        <span>TYPE</span><span>DETAILS</span><span style="text-align:right">VALUE</span><span style="text-align:right">TIME</span><span></span>
+      </div>
+      ${top10.map(_txRow).join('')}`;
+  }
+
+  async function doTrack() {
+    const address  = (inp()?.value || '').trim();
+    const evmChain = chainSel()?.value || 'ethereum';
+    if (!address) return;
+    if (!_privyUser) { openWalletModal(); return; }
+
+    show('wtLoading');
+    if (loadingMsg()) loadingMsg().textContent = `Fetching ${isSolana(address) ? 'Solana' : evmChain} wallet data…`;
+
+    try {
+      const res  = await fetch(`${API_BASE}/wallet-tracker`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ address, evmChain }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed');
+
+      show('wtContent');
+      renderSummary(data);
+      renderHoldings(data.tokens || [], data.chain === 'solana' ? 'solana' : evmChain);
+      renderTxHistory(data.txs || [], data.chain === 'solana' ? 'solana' : evmChain, data.nextCursor || null, address);
+    } catch (e) {
+      show('wtEmpty');
+      if (detectEl()) { detectEl().textContent = '⚠ ' + e.message; detectEl().style.color = '#F0484B'; }
+    }
+  }
+
+  // Wire up after DOM ready
+  const wire = () => {
+    inp()?.addEventListener('input', onInput);
+    scanBtn()?.addEventListener('click', doTrack);
+    inp()?.addEventListener('keydown', e => e.key === 'Enter' && doTrack());
+    copyBtn()?.addEventListener('click', () => {
+      const addr = inp()?.value?.trim();
+      if (!addr) return;
+      navigator.clipboard.writeText(addr).then(() => {
+        const btn = copyBtn();
+        btn.style.color = 'var(--accent-green)';
+        setTimeout(() => { btn.style.color = ''; }, 1000);
+        showToast('Wallet address copied to clipboard');
+      });
+    });
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
+  else wire();
+})();
+
+/* ─── Trending ────────────────────────────────────────────────────────────── */
 function renderTrending(tokens) {
-  $('trendingList').innerHTML = tokens.map(t => {
+  const trendEl = $('trendingList');
+  if (!trendEl) return;
+  trendEl.innerHTML = tokens.map(t => {
     const riskClass = t.risk >= 70 ? 'high' : t.risk >= 45 ? 'med' : 'low';
     const chgClass  = t.change >= 0 ? 'up' : 'down';
     const img = t.imageUrl ? `<img src="${t.imageUrl}" style="width:20px;height:20px;border-radius:50%;object-fit:cover;" onerror="this.style.display='none'">` : '';
@@ -1529,9 +1817,11 @@ function dashAge(isoStr) {
 
 function openInAnalyzer(address, networkId) {
   if (!address) return;
-  document.getElementById('contractInput').value = address;
-  document.querySelector('[data-page="ai-analyzer"]').click();
-  document.getElementById('scanBtn').click();
+  requireWallet(() => {
+    document.getElementById('contractInput').value = address;
+    document.querySelector('[data-page="ai-analyzer"]').click();
+    document.getElementById('scanBtn').click();
+  });
 }
 
 function filterByChain(arr) {
@@ -1578,51 +1868,70 @@ function renderBestVolume(items) {
 function renderDashList(items, el) {
   const filtered = filterByChain(items).slice(0, 10);
   if (!filtered.length) { el.innerHTML = '<div class="dash-loading">No data for this chain</div>'; return; }
-  el.innerHTML = filtered.map((t, i) => {
-    const chg = t.priceChange24h || 0;
-    const chgColor = chg >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-    const chainColor = CHAIN_COLOR[t.networkId] || '#8b92a8';
-    return `<div class="dash-list-row" onclick="openInAnalyzer('${t.address}','${t.networkId}')">
-      <span class="dash-list-idx">${i+1}</span>
-      <div class="dash-list-info">
-        <div class="dash-list-name">${t.name}</div>
-        <div class="dash-list-meta">
-          <span class="dash-chain-badge" style="background:${chainColor}22;color:${chainColor}">${t.network}</span>
-          · Liq ${dashFmtVol(t.liquidity)}
+  el.innerHTML = `
+    <div class="dash-vol-header">
+      <span>#</span><span>TOKEN / PAIR</span><span style="text-align:right">PRICE</span>
+      <span style="text-align:right">24H CHANGE</span><span style="text-align:right">24H VOLUME</span>
+      <span style="text-align:right">MCAP</span><span style="text-align:right">LIQ</span>
+      <span style="text-align:right">AGE</span><span style="text-align:right">BUYS</span><span style="text-align:right">SELLS</span>
+    </div>` +
+    filtered.map((t, i) => {
+      const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+      const chg = t.priceChange24h || 0;
+      const chgColor = chg >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+      const chainColor = CHAIN_COLOR[t.networkId] || '#8b92a8';
+      return `<div class="dash-vol-row" onclick="openInAnalyzer('${t.address}','${t.networkId}')">
+        <span class="dash-vol-rank ${rankClass}">${i+1}</span>
+        <div class="dash-vol-info">
+          <span class="dash-vol-name">${t.name}</span>
+          <span class="dash-vol-pair">
+            <span class="dash-chain-badge" style="background:${chainColor}22;color:${chainColor}">${t.network}</span>
+          </span>
         </div>
-      </div>
-      <div class="dash-list-right">
-        <span class="dash-list-price">${dashFmtPrice(t.price)}</span>
-        <span class="dash-list-change" style="color:${chgColor}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
-        <span class="dash-list-vol">Vol ${dashFmtVol(t.volume24h)}</span>
-      </div>
-    </div>`;
-  }).join('');
+        <span class="dash-vol-price">${dashFmtPrice(t.price)}</span>
+        <span class="dash-vol-change" style="color:${chgColor}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
+        <span class="dash-vol-volume">${dashFmtVol(t.volume24h)}</span>
+        <span class="dash-vol-liq">${dashFmtVol(t.fdv)}</span>
+        <span class="dash-vol-liq">${dashFmtVol(t.liquidity)}</span>
+        <span class="dash-vol-liq" style="color:var(--accent-blue)">${dashAge(t.createdAt) || '-'}</span>
+        <span class="dash-vol-liq" style="color:var(--accent-green)">${t.buys24h || 0}</span>
+        <span class="dash-vol-liq" style="color:var(--accent-red)">${t.sells24h || 0}</span>
+      </div>`;
+    }).join('');
 }
 
 function renderNewPairs(items, el) {
   const filtered = filterByChain(items).slice(0, 10);
   if (!filtered.length) { el.innerHTML = '<div class="dash-loading">No data for this chain</div>'; return; }
-  el.innerHTML = filtered.map((t, i) => {
-    const chg = t.priceChange24h || 0;
-    const chgColor = chg >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-    const chainColor = CHAIN_COLOR[t.networkId] || '#8b92a8';
-    return `<div class="dash-list-row" onclick="openInAnalyzer('${t.address}','${t.networkId}')">
-      <span class="dash-list-idx">${i+1}</span>
-      <div class="dash-list-info">
-        <div class="dash-list-name">${t.name}</div>
-        <div class="dash-list-meta">
-          <span class="dash-chain-badge" style="background:${chainColor}22;color:${chainColor}">${t.network}</span>
-          · Liq ${dashFmtVol(t.liquidity)}
+  el.innerHTML = `
+    <div class="dash-vol-header">
+      <span>#</span><span>TOKEN / PAIR</span><span style="text-align:right">PRICE</span>
+      <span style="text-align:right">24H CHANGE</span><span style="text-align:right">24H VOLUME</span>
+      <span style="text-align:right">MCAP</span><span style="text-align:right">LIQ</span>
+      <span style="text-align:right">AGE</span><span style="text-align:right">BUYS</span><span style="text-align:right">SELLS</span>
+    </div>` +
+    filtered.map((t, i) => {
+      const chg = t.priceChange24h || 0;
+      const chgColor = chg >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+      const chainColor = CHAIN_COLOR[t.networkId] || '#8b92a8';
+      return `<div class="dash-vol-row" onclick="openInAnalyzer('${t.address}','${t.networkId}')">
+        <span class="dash-vol-rank">${i+1}</span>
+        <div class="dash-vol-info">
+          <span class="dash-vol-name">${t.name}</span>
+          <span class="dash-vol-pair">
+            <span class="dash-chain-badge" style="background:${chainColor}22;color:${chainColor}">${t.network}</span>
+          </span>
         </div>
-      </div>
-      <div class="dash-list-right">
-        <span class="dash-list-price">${dashFmtPrice(t.price)}</span>
-        <span class="dash-list-change" style="color:${chgColor}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
-        <span class="dash-age">${dashAge(t.createdAt)}</span>
-      </div>
-    </div>`;
-  }).join('');
+        <span class="dash-vol-price">${dashFmtPrice(t.price)}</span>
+        <span class="dash-vol-change" style="color:${chgColor}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
+        <span class="dash-vol-volume">${dashFmtVol(t.volume24h)}</span>
+        <span class="dash-vol-liq">${dashFmtVol(t.fdv)}</span>
+        <span class="dash-vol-liq">${dashFmtVol(t.liquidity)}</span>
+        <span class="dash-vol-liq" style="color:var(--accent-green)">${dashAge(t.createdAt) || '-'}</span>
+        <span class="dash-vol-liq" style="color:var(--accent-green)">${t.buys24h || 0}</span>
+        <span class="dash-vol-liq" style="color:var(--accent-red)">${t.sells24h || 0}</span>
+      </div>`;
+    }).join('');
 }
 
 function renderDashFilter() {
@@ -1657,6 +1966,8 @@ async function fetchDashboard(chain) {
   $('dashVolSub').textContent   = `${label} · 24h`;
   $('dashTrendSub').textContent = label;
   $('dashNewSub').textContent   = label;
+  const newPairsSection = $('dashNewPairsSection');
+  if (newPairsSection) newPairsSection.style.display = chain === 'all' ? 'none' : '';
   _setDashLoading();
   try {
     const url  = chain === 'all' ? `${API_BASE}/dashboard` : `${API_BASE}/dashboard?chain=${chain}`;
@@ -1666,7 +1977,7 @@ async function fetchDashboard(chain) {
     _dashData = json.data;
     renderBestVolume(_dashData.bestVolume);
     renderDashList(_dashData.trending,  $('dashTrendingList'));
-    renderNewPairs(_dashData.newPairs,  $('dashNewPairsList'));
+    if (chain !== 'all') renderNewPairs(_dashData.newPairs, $('dashNewPairsList'));
   } catch (e) {
     ['dashVolumeGrid','dashTrendingList','dashNewPairsList'].forEach(id => {
       const el = $(id);
@@ -1683,3 +1994,478 @@ async function loadDashboard() {
   $('dashNewSub').textContent   = 'All Chains';
   await fetchDashboard('all');
 }
+
+/* ─── Privy Wallet Connect ─────────────────────────────────────────────────── */
+let _privyUser = null;
+let _watchlist = new Set(); // set of lowercase token addresses in watchlist
+let _currentTokenData = null; // last scanned token data
+
+function openWalletModal() {
+  const modal = document.getElementById('walletModal');
+  if (!modal) return;
+  if (_privyUser) {
+    // Already connected — show disconnect option
+    const addr = _privyUser._displayAddress || _privyUser.wallet?.address || _privyUser.linked_accounts?.find(a => a.type === 'wallet')?.address || _privyUser.email?.address || _privyUser.linked_accounts?.find(a => a.type === 'email')?.address || '';
+    const initials = addr ? addr.charAt(0).toUpperCase() : 'P';
+    document.getElementById('walletModalBody').innerHTML = `
+      <div style="text-align:center;padding:10px 0 16px">
+        <div style="width:44px;height:44px;border-radius:50%;background:#27c97f22;border:2px solid #27c97f55;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#27c97f;margin:0 auto 10px">${initials}</div>
+        <div style="display:inline-flex;align-items:center;gap:5px;background:#27c97f15;border:1px solid #27c97f30;border-radius:20px;padding:3px 12px;margin-bottom:10px">
+          <span style="width:6px;height:6px;border-radius:50%;background:#27c97f;display:inline-block;flex-shrink:0"></span>
+          <span style="font-size:10px;color:#27c97f;font-weight:600">CONNECTED</span>
+        </div>
+        <div style="background:#27c97f10;border:1px solid #27c97f30;border-radius:10px;padding:8px 12px;text-align:center">
+          <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#27c97f;margin-right:6px;vertical-align:middle;flex-shrink:0"></span><span style="font-size:10px;font-family:monospace;color:#27c97f;font-weight:600;word-break:break-all;line-height:1.6">${addr}</span>
+        </div>
+      </div>
+      <div style="padding:0 0 10px">
+        <button onclick="navigator.clipboard.writeText('${addr}').then(()=>showToast('Wallet address copied!'))" style="width:100%;background:#1e2235;border:1px solid #2d3748;border-radius:10px;color:#e2e8f0;font-size:12px;font-weight:700;padding:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:0.5px;margin-bottom:8px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy Address
+        </button>
+        <button onclick="privyLogout()" style="width:100%;background:#ff4d4d12;border:1px solid #ff4d4d44;border-radius:10px;padding:10px;cursor:pointer;color:#ff6b6b;font-size:12px;font-weight:700;letter-spacing:0.5px">DISCONNECT</button>
+      </div>
+      <div style="text-align:center;font-size:10px;color:#4b5563">Powered by Privy</div>`;
+  } else {
+    document.getElementById('walletModalBody').innerHTML = `
+      <button id="mmBtn" onclick="privyConnectMM()" style="width:100%;display:flex;align-items:center;gap:12px;background:#13161d;border:1px solid #2d3144;border-radius:10px;padding:14px 16px;cursor:pointer;margin-bottom:10px;transition:border-color 0.15s">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" width="28" height="28"/>
+        <div style="text-align:left">
+          <div style="font-size:12px;font-weight:700;color:#e2e8f0;font-family:monospace">MetaMask</div>
+          <div style="font-size:10px;color:#8b92a8">Browser extension wallet</div>
+        </div>
+      </button>
+      <div style="display:flex;align-items:center;gap:8px;margin:4px 0 10px">
+        <div style="flex:1;height:1px;background:#2d3144"></div>
+        <span style="font-size:10px;color:#8b92a8">OR</span>
+        <div style="flex:1;height:1px;background:#2d3144"></div>
+      </div>
+      <div id="emailLoginStep1">
+        <div style="font-size:10px;color:#8b92a8;margin-bottom:6px;letter-spacing:0.5px">EMAIL</div>
+        <div style="display:flex;gap:8px">
+          <input id="privyEmailInput" type="text" inputmode="email" placeholder="Enter your email" autocomplete="chrome-off" name="bb_email_nofill" spellcheck="false" style="flex:1;background:#13161d;border:1px solid #2d3144;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')privySendCode()"/>
+          <button onclick="privySendCode()" style="background:#27C97F;border:none;border-radius:8px;padding:10px 14px;color:#000;font-size:11px;font-weight:700;cursor:pointer;font-family:monospace;white-space:nowrap">SEND CODE</button>
+        </div>
+      </div>
+      <div id="emailLoginStep2" style="display:none">
+        <div style="font-size:10px;color:#8b92a8;margin-bottom:4px;letter-spacing:0.5px">OTP CODE</div>
+        <div style="font-size:10px;color:#27C97F;margin-bottom:8px" id="emailLoginHint"></div>
+        <div style="display:flex;gap:8px">
+          <input id="privyOtpInput" type="text" maxlength="6" placeholder="6-digit code" style="flex:1;background:#13161d;border:1px solid #2d3144;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;font-family:monospace;outline:none;letter-spacing:4px;text-align:center" onkeydown="if(event.key==='Enter')privyVerifyCode()"/>
+          <button onclick="privyVerifyCode()" style="background:#27C97F;border:none;border-radius:8px;padding:10px 14px;color:#000;font-size:11px;font-weight:700;cursor:pointer;font-family:monospace">VERIFY</button>
+        </div>
+        <button onclick="privyEmailBack()" style="background:none;border:none;color:#8b92a8;font-size:10px;cursor:pointer;margin-top:8px;padding:0">← Back</button>
+      </div>
+      <div style="text-align:center;font-size:10px;color:#8b92a8;padding-top:10px">Powered by Privy</div>`;
+  }
+  modal.style.display = 'flex';
+}
+
+function closeWalletModal() {
+  const modal = document.getElementById('walletModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// Close modal on backdrop click
+document.getElementById('walletModal')?.addEventListener('click', function(e) {
+  if (e.target === this) closeWalletModal();
+});
+
+function _setWalletConnected(user) {
+  _privyUser = user;
+  if (user) setTimeout(_loadWatchlist, 200);
+  else { _watchlist = new Set(); if (_currentTokenData?.address) _updateWatchlistBtn(_currentTokenData.address); }
+  const btn   = document.getElementById('connectWalletBtn');
+  const label = document.getElementById('connectWalletLabel');
+  if (btn && label) {
+    if (user) {
+      const display = user._displayAddress
+        || user.wallet?.address
+        || user.linked_accounts?.find(a => a.type === 'wallet')?.address
+        || '';
+      const email = user.email?.address || user.linked_accounts?.find(a => a.type === 'email')?.address || '';
+      const short = display ? display.slice(0,6)+'…'+display.slice(-4) : email ? email.split('@')[0]+'@…' : 'Connected';
+      label.textContent = short;
+      btn.classList.add('connected');
+    } else {
+      label.textContent = 'Connect Wallet';
+      btn.classList.remove('connected');
+    }
+  }
+  _updateSidebarProfile(user);
+}
+
+function _updateSidebarProfile(user) {
+  const walletEl  = document.getElementById('sidebarWallet');
+  const avatarEl  = document.getElementById('sidebarAvatar');
+  const popupFull = document.getElementById('popupWalletFull');
+  if (!walletEl) return;
+  if (user) {
+    const addr = user._displayAddress
+      || user.wallet?.address
+      || user.linked_accounts?.find(a => a.type === 'wallet')?.address
+      || '';
+    const email = user.email?.address || user.linked_accounts?.find(a => a.type === 'email')?.address || '';
+    const display = addr || email || '';
+    const short = display ? (addr ? addr.slice(0,6)+'…'+addr.slice(-4) : email) : 'Connected';
+    walletEl.textContent = short;
+    if (avatarEl) avatarEl.textContent = display.charAt(0).toUpperCase() || 'P';
+    const popupAvatar = document.getElementById('popupAvatar');
+    if (popupAvatar) popupAvatar.textContent = display.charAt(0).toUpperCase() || 'P';
+    if (popupFull) popupFull.textContent = display || '—';
+  } else {
+    walletEl.textContent = 'Not connected';
+    if (avatarEl) avatarEl.textContent = 'P';
+    if (popupFull) popupFull.textContent = '—';
+  }
+}
+
+window.toggleProfilePopup = () => {
+  const popup   = document.getElementById('profilePopup');
+  const overlay = document.getElementById('profileModalOverlay');
+  if (!popup) return;
+  const open = popup.style.display === 'none';
+  popup.style.display   = open ? 'block' : 'none';
+  if (overlay) overlay.style.display = open ? 'block' : 'none';
+};
+window.__profileCopy = () => {
+  const addr = document.getElementById('popupWalletFull')?.textContent;
+  if (!addr || addr === '—') return showToast('No wallet connected');
+  navigator.clipboard.writeText(addr).then(() => showToast('Wallet address copied!'));
+};
+window.__profileDisconnect = async () => {
+  document.getElementById('profilePopup').style.display = 'none';
+  await disconnectWallet();
+};
+
+/* ─── Watchlist helpers ───────────────────────────────────────────────────── */
+function _authHeaders() {
+  const t = localStorage.getItem('bb_jwt');
+  return t ? { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+}
+
+async function _updateWatchlistBtn(address) {
+  const btn   = $('watchlistBtn');
+  const heart = $('watchlistHeart');
+  if (!btn || !heart || !address) return;
+  const addr = address.toLowerCase();
+  // First render from memory, then confirm from DB
+  const memInList = _watchlist.has(addr);
+  heart.setAttribute('fill', memInList ? '#ff6b8a' : 'none');
+  btn.style.opacity = memInList ? '1' : '0.6';
+  btn.title = memInList ? 'Remove from watchlist' : 'Add to watchlist';
+  // Always confirm from DB if logged in
+  if (!localStorage.getItem('bb_jwt')) return;
+  try {
+    const res = await fetch(`${API_BASE}/watchlist/check/${encodeURIComponent(addr)}`, { credentials: 'include', headers: _authHeaders() });
+    if (!res.ok) return;
+    const { inWatchlist } = await res.json();
+    if (inWatchlist) _watchlist.add(addr); else _watchlist.delete(addr);
+    heart.setAttribute('fill', inWatchlist ? '#ff6b8a' : 'none');
+    btn.style.opacity = inWatchlist ? '1' : '0.6';
+    btn.title = inWatchlist ? 'Remove from watchlist' : 'Add to watchlist';
+  } catch(_) {}
+}
+
+async function _loadWatchlist() {
+  if (!_privyUser && !localStorage.getItem('bb_jwt')) return;
+  try {
+    const res = await fetch(`${API_BASE}/watchlist`, { credentials: 'include', headers: _authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    _watchlist = new Set((data.items || []).map(i => i.address.toLowerCase()));
+    if (_currentTokenData?.address) _updateWatchlistBtn(_currentTokenData.address);
+  } catch(_) {}
+}
+
+async function renderWatchlistPage() {
+  const el = document.getElementById('watchlistContent');
+  if (!el) return;
+  if (!_privyUser && !localStorage.getItem('bb_jwt')) {
+    el.innerHTML = `<div style="text-align:center;padding:60px 0;color:#6b7280;font-size:13px">
+      <div style="font-size:28px;margin-bottom:12px">♡</div>
+      Connect wallet to see your watchlist
+      <br><button onclick="openWalletModal()" style="margin-top:16px;background:#27c97f;border:none;border-radius:8px;color:#000;padding:8px 20px;cursor:pointer;font-size:13px;font-weight:600">Connect Wallet</button>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `<div style="text-align:center;padding:40px 0;color:#6b7280;font-size:13px">Loading…</div>`;
+  try {
+    const token = localStorage.getItem('bb_jwt');
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const res = await fetch(`${API_BASE}/watchlist`, { credentials: 'include', headers });
+    const data = await res.json();
+    const items = data.items || [];
+    if (items.length === 0) {
+      el.innerHTML = `<div style="text-align:center;padding:60px 0;color:#6b7280;font-size:13px">
+        <div style="font-size:28px;margin-bottom:12px">♡</div>
+        No tokens in watchlist yet.<br>
+        <span style="color:#9ca3af">Scan a token and click the ♡ to save it.</span>
+      </div>`;
+      return;
+    }
+    el.innerHTML = items.map(item => `
+      <div style="display:flex;align-items:center;justify-content:space-between;background:#12141e;border:1px solid #1e2235;border-radius:10px;padding:12px 16px;cursor:pointer"
+           onclick="openInAnalyzer('${item.address}')">
+        <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:36px;height:36px;border-radius:50%;background:#1e2235;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#e2e8f0;overflow:hidden;flex-shrink:0">
+            ${(item.imageUrl || item.image_url)
+              ? `<img src="${item.imageUrl || item.image_url}" style="width:36px;height:36px;object-fit:cover;border-radius:50%" onerror="this.parentElement.textContent='${(item.symbol||'?').charAt(0)}'">`
+              : (item.symbol||'?').charAt(0)}
+          </div>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#e2e8f0">${item.name || item.symbol || 'Unknown'}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px">${item.symbol || ''} · ${(item.chain||'').toUpperCase()} · ${item.address.slice(0,6)}…${item.address.slice(-4)}</div>
+          </div>
+        </div>
+        <button onclick="event.stopPropagation();removeFromWatchlist('${item.address}')" title="Remove"
+          style="background:none;border:none;cursor:pointer;padding:4px;color:#ff6b8a;font-size:16px;opacity:0.7;transition:opacity 0.2s"
+          onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7">♥</button>
+      </div>
+    `).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="text-align:center;padding:40px 0;color:#ff4d4d;font-size:13px">Error loading watchlist</div>`;
+  }
+}
+
+async function removeFromWatchlist(address) {
+  const addr = address.toLowerCase();
+  try {
+    const token = localStorage.getItem('bb_jwt');
+    const headers = token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+    await fetch(`${API_BASE}/watchlist/${addr}`, { method: 'DELETE', credentials: 'include', headers });
+    _watchlist.delete(addr);
+    if (_currentTokenData?.address?.toLowerCase() === addr) _updateWatchlistBtn(addr);
+    renderWatchlistPage();
+    showToast('Removed from watchlist');
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+async function loadLandingCA() {
+  const el = document.getElementById('landingCA');
+  const copyBtn = document.getElementById('landingCACopy');
+  if (!el) return;
+  if (_cachedCA) { _renderCA(el, copyBtn, _cachedCA); return; }
+  el.textContent = 'Loading…';
+  try {
+    const res = await fetch(`${API_BASE}/config/public`);
+    const data = await res.json();
+    _cachedCA = data.contractAddress || 'coming_soon';
+    _renderCA(el, copyBtn, _cachedCA);
+  } catch(_) { el.textContent = 'Coming Soon'; }
+}
+function _renderCA(el, copyBtn, ca) {
+  const isComingSoon = ca === 'coming_soon' || !ca;
+  if (isComingSoon) {
+    // Mask as 44-char Solana-style address with X's, reveal first/last 4
+    const mask = 'Xxxx' + 'X'.repeat(36) + 'xxxx';
+    el.innerHTML = `<span style="opacity:0.35;letter-spacing:1.5px">${mask}</span>`;
+    el.style.color = '#4b5563';
+    el.title = 'Contract address will be revealed at launch';
+  } else {
+    el.textContent = ca;
+    el.style.color = '#27c97f';
+    el.title = '';
+  }
+  if (copyBtn) {
+    copyBtn.style.display = 'inline-block';
+    copyBtn.disabled = isComingSoon;
+    copyBtn.style.opacity = isComingSoon ? '0.35' : '1';
+    copyBtn.style.cursor = isComingSoon ? 'not-allowed' : 'pointer';
+  }
+}
+window.__copyCA = () => {
+  if (!_cachedCA || _cachedCA === 'coming_soon') return;
+  navigator.clipboard.writeText(_cachedCA).then(() => showToast('Contract address copied!'));
+};
+
+async function toggleWatchlist() {
+  if (!_privyUser && !localStorage.getItem('bb_jwt')) {
+    openWalletModal();
+    return;
+  }
+  const d = _currentTokenData;
+  // Fallback: read address from the scanned input if currentTokenData not set
+  const inputAddr = (document.getElementById('contractInput') || document.getElementById('tokenInput'))?.value?.trim();
+  const rawAddr = d?.address || inputAddr;
+  if (!rawAddr || document.getElementById('tokenHeader')?.style?.display === 'none') {
+    showToast('Scan a token first'); return;
+  }
+  const addr = rawAddr.toLowerCase();
+  const btn = document.getElementById('watchlistBtn');
+  if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.4'; }
+  try {
+    const headers = { ..._authHeaders(), 'Content-Type': 'application/json' };
+    // Check current DB state
+    const checkRes = await fetch(`${API_BASE}/watchlist/check/${encodeURIComponent(addr)}`, { credentials: 'include', headers: _authHeaders() });
+    if (checkRes.status === 401) { openWalletModal(); throw new Error('Please connect wallet first'); }
+    if (!checkRes.ok) throw new Error('Auth error');
+    const { inWatchlist } = await checkRes.json();
+    if (inWatchlist) {
+      const res = await fetch(`${API_BASE}/watchlist/${addr}`, { method: 'DELETE', credentials: 'include', headers });
+      if (!res.ok) throw new Error('Failed to remove');
+      _watchlist.delete(addr);
+      showToast('Removed from watchlist');
+    } else {
+      const res = await fetch(`${API_BASE}/watchlist`, {
+        method: 'POST', credentials: 'include', headers,
+        body: JSON.stringify({ address: addr, chain: d?.chain || 'unknown', name: d?.name || addr.slice(0,8), symbol: d?.symbol || '?', imageUrl: d?.imageUrl || null }),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      _watchlist.add(addr);
+      showToast('Added to watchlist ❤');
+    }
+    _updateWatchlistBtn(addr);
+  } catch(e) {
+    showToast('Error: ' + e.message);
+    _updateWatchlistBtn(addr);
+  } finally {
+    if (btn) { btn.style.pointerEvents = ''; btn.style.opacity = ''; }
+  }
+}
+
+async function _bbLogin(wallet, privyUser, method = 'metamask') {
+  try {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        wallet,
+        privyUserId: privyUser?.id || null,
+        meta: { connectedAt: Date.now(), method },
+      }),
+    });
+    const data = await res.json();
+    if (data.token) localStorage.setItem('bb_jwt', data.token);
+    return data;
+  } catch(e) {
+    console.warn('[bbLogin]', e.message);
+  }
+}
+
+async function _bbLogout() {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch(_) {}
+  localStorage.removeItem('bb_jwt');
+}
+
+async function _bbMe() {
+  try {
+    const token = localStorage.getItem('bb_jwt');
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const res = await fetch(`${API_BASE}/auth/me`, { headers, credentials: 'include' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.user || null;
+  } catch(_) { return null; }
+}
+
+let _emailForOtp = '';
+
+async function privySendCode() {
+  const input = document.getElementById('privyEmailInput');
+  const email = input?.value?.trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (input) { input.style.borderColor = '#ff4d4d'; setTimeout(() => input.style.borderColor = '', 1200); }
+    showToast('Enter a valid email address');
+    return;
+  }
+  const btn = input.nextElementSibling;
+  if (btn) { btn.textContent = 'SENDING…'; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
+  try {
+    await window.PrivySDK.sendEmailCode(email);
+    _emailForOtp = email;
+    document.getElementById('emailLoginStep1').style.display = 'none';
+    document.getElementById('emailLoginStep2').style.display = 'block';
+    document.getElementById('emailLoginHint').textContent = `Code sent to ${email}`;
+    setTimeout(() => document.getElementById('privyOtpInput')?.focus(), 100);
+  } catch(e) {
+    showToast('Failed to send code: ' + (e.message || 'Error'));
+    if (btn) { btn.textContent = 'SEND CODE'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
+}
+
+async function privyVerifyCode() {
+  const input = document.getElementById('privyOtpInput');
+  const code  = input?.value?.trim();
+  if (!code || code.length < 6) {
+    if (input) { input.style.borderColor = '#ff4d4d'; setTimeout(() => input.style.borderColor = '', 1200); }
+    return;
+  }
+  const btn = input.nextElementSibling;
+  if (btn) { btn.textContent = '…'; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
+  try {
+    const user = await window.PrivySDK.loginWithEmailCode(_emailForOtp, code);
+    const emailAddr = user?.email?.address || _emailForOtp;
+    const bbData = await _bbLogin(emailAddr, user, 'email');
+    if (bbData?.displayAddress) user._displayAddress = bbData.displayAddress;
+    _setWalletConnected(user);
+    closeWalletModal();
+    showToast('Logged in via email');
+  } catch(e) {
+    showToast('Invalid code: ' + (e.message || 'Error'));
+    if (btn) { btn.textContent = 'VERIFY'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+    if (input) input.value = '';
+  }
+}
+
+function privyEmailBack() {
+  document.getElementById('emailLoginStep1').style.display = 'block';
+  document.getElementById('emailLoginStep2').style.display = 'none';
+}
+
+async function privyConnectMM() {
+  const btn = document.getElementById('mmBtn');
+  if (btn) { btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; btn.querySelector('div div').textContent = 'Connecting…'; }
+  try {
+    if (!window.PrivySDK) throw new Error('Privy SDK not loaded');
+    const privyUser = await window.PrivySDK.connectMetaMask();
+    const wallet    = privyUser?.wallet?.address
+      || privyUser?.linked_accounts?.find(a => a.type === 'wallet')?.address;
+    if (wallet) await _bbLogin(wallet, privyUser);
+    _setWalletConnected(privyUser);
+    closeWalletModal();
+    showToast('Wallet connected');
+  } catch(e) {
+    showToast('Connection failed: ' + (e.message || 'Unknown error'));
+    if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
+}
+
+async function privyLogout() {
+  try { await window.PrivySDK?.logout(); } catch(_) {}
+  await _bbLogout();
+  _setWalletConnected(null);
+  closeWalletModal();
+  showToast('Wallet disconnected');
+}
+
+// Init on page load — try cookie/JWT auto-login first, then Privy session
+(async function() {
+  try {
+    // 1. Check if backend session still valid (cookie auto-login)
+    const bbUser = await _bbMe();
+    if (bbUser) {
+      const displayAddr = bbUser.generated_address || bbUser.wallet;
+      _setWalletConnected({ _displayAddress: displayAddr, _fromDb: true, id: bbUser.id });
+      return;
+    }
+    // 2. Fall back to Privy session
+    if (!window.PrivySDK) return;
+    const privyUser = await window.PrivySDK.init();
+    if (privyUser) {
+      const wallet = privyUser?.wallet?.address
+        || privyUser?.linked_accounts?.find(a => a.type === 'wallet')?.address;
+      const email  = privyUser?.email?.address
+        || privyUser?.linked_accounts?.find(a => a.type === 'email')?.address;
+      const identifier = wallet || email;
+      if (identifier) {
+        const bbData = await _bbLogin(identifier, privyUser, wallet ? 'metamask' : 'email');
+        privyUser._displayAddress = bbData?.displayAddress || wallet || null;
+      }
+      _setWalletConnected(privyUser);
+    }
+  } catch(_) {}
+})();
