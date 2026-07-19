@@ -1,2 +1,10 @@
 node_modules/
-node_modules/
+
+# Secrets & local config (never commit) — .env.example IS committed as the template
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+backend/.secrets.json

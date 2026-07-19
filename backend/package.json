@@ -8,6 +8,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.2",
     "axios": "^1.6.0",
     "better-sqlite3": "^12.11.1",
     "cookie-parser": "^1.4.7",

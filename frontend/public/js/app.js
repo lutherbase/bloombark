@@ -36,11 +36,16 @@ function showToast(msg, type = 'success') {
 }
 
 /* ─── Config ──────────────────────────────────────────────────────────────── */
-const API_BASE = 'http://localhost:3001/api';
-const WS_URL   = 'ws://localhost:3001';
+// Backend origin. Override at runtime via `window.BLOOMBARK_API_ORIGIN` (e.g. an
+// injected <script> in production). Defaults to localhost:3001 in dev, or the
+// same origin the page is served from otherwise.
+const _isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
+const API_ORIGIN = window.BLOOMBARK_API_ORIGIN || (_isLocal ? 'http://localhost:3001' : location.origin);
+const API_BASE = API_ORIGIN + '/api';
+const WS_URL   = API_ORIGIN.replace(/^http/, 'ws');
 
 /* ─── State ───────────────────────────────────────────────────────────────── */
-let selectedChain  = 'auto'; // 'auto' | 'solana' | 'ethereum' | 'bsc' | 'base' | 'arbitrum' | 'tron'
+let selectedChain  = 'auto'; // 'auto' | 'ethereum' | 'base' | 'robinhood'
 let currentData    = null;
 let _cachedCA      = null;
 let priceChart     = null;
@@ -116,10 +121,12 @@ document.querySelectorAll('.nav-item').forEach(el => {
     const titles = {
       'dashboard':    ['MARKET OVERVIEW',  'Real-time market data across chains'],
       'ai-analyzer':  ['AI ANALYZER',     'Analyze token risk, insider activity & wallet behavior from contract address'],
+      'trade':        ['TRADE',           'Bloombark native swap — best route via KyberSwap (EVM)'],
       'wallet-tracker':['WALLET TRACKER', 'Track and monitor specific wallets in real-time'],
       'smart-money':  ['SMART MONEY',     'Follow smart money wallets and their moves'],
       'insider-scan': ['INSIDER SCAN',    'Detect insider wallets, team allocation, hidden connections & suspicious activity'],
       'narrative':    ['NARRATIVE',       'Track trending narratives and market sectors'],
+      'community':    ['BLOOMBARK COMMUNITY', 'Chat, shill, and connect with other traders'],
       'ai-trading':   ['AI TRADING AGENT','Automated trading signals powered by AI models'],
       'auto-research':['AUTO RESEARCH',   'Automated token research and report generation'],
       'alerts':       ['ALERTS',          'Your configured alerts and notifications'],
@@ -130,7 +137,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
       'docs':         ['DOCUMENTATION',   'API docs, guides, and reference'],
       'landing':      ['LANDING PAGE',    'About Bloombark Terminal'],
     };
-    const _wip = ['smart-money','insider-scan','narrative','ai-trading','auto-research','alerts','portfolio','leaderboard'];
+    const _wip = ['smart-money','insider-scan','ai-trading','auto-research','alerts','portfolio','leaderboard'];
     if (_wip.includes(page)) {
       el.classList.remove('active');
       showWipModal();
@@ -148,6 +155,9 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (page === 'dashboard') loadDashboard();
     if (page === 'watchlist') renderWatchlistPage();
     if (page === 'landing') loadLandingCA();
+    if (page === 'narrative') loadNarrative();
+    if (page === 'community') initCommunity();
+    if (page === 'trade') initTradePage();
   });
 });
 
@@ -168,54 +178,39 @@ setInterval(() => {
 
 /* ─── Chain Detection ────────────────────────────────────────────────────── */
 const CHAIN_META = {
-  auto:     { icon: '🌐', label: 'Auto' },
-  solana:   { icon: '◎',  label: 'Solana' },
-  ethereum: { icon: '⟠',  label: 'Ethereum' },
-  bsc:      { icon: '🟡', label: 'BSC' },
-  base:     { icon: '🔵', label: 'Base' },
-  arbitrum: { icon: '🔷', label: 'Arbitrum' },
-  tron:     { icon: '🔴', label: 'Tron' },
+  auto:      { icon: '🌐', label: 'Auto' },
+  ethereum:  { icon: '⟠',  label: 'Ethereum' },
+  base:      { icon: '🔵', label: 'Base' },
+  robinhood: { icon: '🟢', label: 'Robinhood' },
 };
 
 function detectChain(addr) {
-  if (!addr) return 'solana';
+  if (!addr) return 'unsupported';
   // Tron: starts with T, 34 chars, base58
   if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr)) return 'tron';
-  // EVM (Ethereum, BSC, Base, Arbitrum): 0x + 40 hex chars
+  // EVM (Ethereum, Base, Arbitrum, Robinhood): 0x + 40 hex chars
   if (/^0x[0-9a-fA-F]{40}$/.test(addr)) return 'ethereum';
-  // Solana: base58, 32-44 chars, no 0, I, O, l
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) return 'solana';
-  return 'solana';
+  return 'unsupported'; // Solana-style base58 addresses are no longer supported
 }
 
 
 // Address format validators per chain group
 const ADDR_VALIDATORS = {
-  solana:   addr => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr),
   tron:     addr => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr),
   evm:      addr => /^0x[0-9a-fA-F]{40}$/.test(addr),
 };
-const EVM_CHAINS = ['ethereum', 'bsc', 'base', 'arbitrum'];
+const EVM_CHAINS = ['ethereum', 'base', 'arbitrum', 'robinhood'];
 
 function validateChainAddress(chain, addr) {
   if (chain === 'auto') return null;
   if (EVM_CHAINS.includes(chain)) {
     if (!ADDR_VALIDATORS.evm(addr)) {
       const detected = detectChain(addr);
+      if (detected === 'unsupported') {
+        return `Invalid address format for ${CHAIN_META[chain].label}. EVM addresses must start with 0x followed by 40 hex characters. Solana is no longer supported.`;
+      }
       const detectedLabel = CHAIN_META[detected]?.label || detected;
-      return `Invalid address format for ${CHAIN_META[chain].label}. ` +
-             (detected !== 'solana' || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)
-               ? `Detected as ${detectedLabel} — switch to the correct network or use Auto Detect.`
-               : 'EVM addresses must start with 0x followed by 40 hex characters.');
-    }
-    return null;
-  }
-  if (chain === 'solana') {
-    if (!ADDR_VALIDATORS.solana(addr)) {
-      const detected = detectChain(addr);
-      const detectedLabel = CHAIN_META[detected]?.label || detected;
-      return `Invalid address format for Solana. ` +
-             `Detected as ${detectedLabel} — switch to ${detectedLabel} or use Auto Detect.`;
+      return `Invalid address format for ${CHAIN_META[chain].label}. Detected as ${detectedLabel} — switch to the correct network or use Auto Detect.`;
     }
     return null;
   }
@@ -265,7 +260,16 @@ $('copyBtn').addEventListener('click', () => {
 });
 
 /* ─── Loading Steps ───────────────────────────────────────────────────────── */
-function runLoadingSteps(cb) {
+let _defaultLoadingStepsHTML = null;
+
+// customSteps: optional array of step labels (defaults to the AI Analyzer steps)
+function runLoadingSteps(cb, customSteps) {
+  const container = $('loadingSteps');
+  if (_defaultLoadingStepsHTML === null) _defaultLoadingStepsHTML = container.innerHTML;
+  container.innerHTML = customSteps
+    ? customSteps.map((s, i) => `<div class="loading-step${i === 0 ? ' active' : ''}">${s}</div>`).join('')
+    : _defaultLoadingStepsHTML;
+
   const steps = document.querySelectorAll('.loading-step');
   steps.forEach(s => s.classList.remove('active', 'done'));
   $('loadingOverlay').style.display = 'flex';
@@ -333,6 +337,30 @@ function renderAll(d) {
   try { renderAISummary(d); } catch(e) { console.warn('renderAISummary:', e); }
   try { renderHolderStats(d); } catch(e) { console.warn('renderHolderStats:', e); }
   try { renderVolumeChart(d); } catch(e) { console.warn('renderVolumeChart:', e); }
+  try { renderSocial(d); } catch(e) { console.warn('renderSocial:', e); }
+  resetPrediction();
+}
+
+// Reset the AI Token Prediction card back to its idle state whenever a new
+// token is scanned — otherwise the previous token's verdict stays on screen.
+function resetPrediction() {
+  const content = $('predictionContent');
+  const btn     = $('predictionBtn');
+  if (content) content.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:40px 0">Click ANALYZE to generate AI prediction for this token</div>';
+  if (btn) { btn.disabled = false; btn.textContent = '▶ ANALYZE'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+}
+
+// Jump from AI Analyzer straight into the Trade page with the scanned token preloaded
+function goToTrade() {
+  const d = _currentTokenData;
+  if (!d?.address) return showToast('Scan a token first');
+  if (!/^0x[0-9a-fA-F]{40}$/.test(d.address)) return showToast('Trade only supports EVM tokens — Solana is not tradeable here');
+
+  document.querySelector('.nav-item[data-page="trade"]')?.click();
+
+  const inp = $('tradeTokenInput');
+  if (inp) inp.value = d.address;
+  tradeLoadToken();
 }
 
 /* ─── Token Header ────────────────────────────────────────────────────────── */
@@ -341,7 +369,7 @@ function renderTokenHeader(d) {
   const chainLabel = d.network || 'Unknown';
   $('tokenSymbol').textContent = (d.symbol || '?') + (d.quoteSymbol ? ' / ' + d.quoteSymbol : '');
   $('tokenNetworkLabel').textContent = chainLabel;
-  const _dotColor = { solana:'#9945FF', ethereum:'#A78BFA', base:'#0052FF', bsc:'#F3BA2F', arbitrum:'#28A0F0', tron:'#FF0013', polygon:'#8247E5' }[(d.chain||'').toLowerCase()] || '#9945FF';
+  const _dotColor = { ethereum:'#A78BFA', base:'#0052FF', arbitrum:'#28A0F0', tron:'#FF0013', polygon:'#8247E5', robinhood:'#00C805' }[(d.chain||'').toLowerCase()] || '#A78BFA';
   const _dotSvg = $('tokenNetwork')?.querySelector('svg');
   if (_dotSvg) _dotSvg.style.fill = _dotColor;
   _updateWatchlistBtn(d.address);
@@ -667,7 +695,7 @@ async function renderWalletRelMap(d) {
   const tokenAddr = d.address || document.getElementById('contractInput')?.value?.trim();
   if (tokenAddr) {
     try {
-      const chain = d.chain || 'solana';
+      const chain = d.chain || 'ethereum';
       const res = await fetch(`${API_BASE}/wallet-map/${encodeURIComponent(tokenAddr)}?chain=${chain}`);
       const json = await res.json();
       if (json.success && json.holders?.length) {
@@ -1061,10 +1089,10 @@ function renderActivityList(all) {
     const iconColor = a.negative ? 'var(--accent-red)' : 'var(--accent-green)';
     const dotColor  = SEV_DOT[a.severity] || SEV_DOT.low;
     const fullAddr = a.walletFull || '';
-    const isValidAddr = fullAddr.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(fullAddr);
+    const isValidAddr = /^0x[0-9a-fA-F]{40}$/.test(fullAddr);
     const walletHtml = a.wallet
       ? (isValidAddr
-          ? `<a href="https://solscan.io/account/${fullAddr}" target="_blank"
+          ? `<a href="https://etherscan.io/address/${fullAddr}" target="_blank"
                style="color:var(--accent-blue);font-size:10px;text-decoration:none"
                onclick="event.stopPropagation()">${a.wallet}</a>`
           : `<span style="color:var(--text-muted);font-size:10px">${a.wallet}</span>`)
@@ -1152,7 +1180,7 @@ function renderSecurity(d) {
     return;
   }
 
-  const isSolana = (d.geckoNetwork || 'solana') === 'solana';
+  const isSolana = (d.geckoNetwork || 'eth') === 'solana';
 
   // Determine overall security level
   const risks = [sec.isHoneypot, sec.cannotBuy, sec.isMintable, sec.isProxy, !sec.isOpenSource].filter(Boolean).length;
@@ -1176,7 +1204,7 @@ function renderSecurity(d) {
   };
 
   const pct = v => `${parseFloat(v || 0).toFixed(2)}%`;
-  const explorerBase = { solana:'https://solscan.io/account/', eth:'https://etherscan.io/address/', bsc:'https://bscscan.com/address/', base:'https://basescan.org/address/', arbitrum:'https://arbiscan.io/address/' }[sec.chain || 'solana'] || 'https://etherscan.io/address/';
+  const explorerBase = { ethereum:'https://etherscan.io/address/', eth:'https://etherscan.io/address/', base:'https://basescan.org/address/', arbitrum:'https://arbiscan.io/address/', robinhood:'https://robinhoodchain.blockscout.com/address/' }[sec.chain || 'ethereum'] || 'https://etherscan.io/address/';
 
   const lpRows = (sec.lpHolders || []).map((h, i) => {
     const short = h.address ? h.address.slice(0,6)+'…'+h.address.slice(-4) : '—';
@@ -1291,7 +1319,9 @@ function renderWalletRows(wallets, symbol) {
     const isSolAddr  = fullAddr.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(fullAddr);
     const isEVMAddr  = /^0x[0-9a-fA-F]{40}$/.test(fullAddr);
     const validAddr  = isSolAddr || isEVMAddr;
-    const solscanUrl = validAddr ? (w.solscanUrl || `https://solscan.io/account/${fullAddr}`) : null;
+    const _walletChain = _currentTokenData?.chain || _currentTokenData?.networkId || 'ethereum';
+    const _explorerMap = { ethereum:'https://etherscan.io/address/', eth:'https://etherscan.io/address/', base:'https://basescan.org/address/', arbitrum:'https://arbiscan.io/address/', robinhood:'https://robinhoodchain.blockscout.com/address/' };
+    const solscanUrl = validAddr ? (_explorerMap[_walletChain] || 'https://etherscan.io/address/') + fullAddr : null;
     const isReal    = w.isRealData === true;
     const isLiqPool = w.isLiqPool === true;
     const fmtUsd    = v => v >= 1000000 ? `$${(v/1000000).toFixed(2)}M` : v >= 1000 ? `$${(v/1000).toFixed(1)}K` : `$${Math.round(v)}`;
@@ -1390,6 +1420,120 @@ function renderAISummary(d) {
   if ($('findingsList')) $('findingsList').innerHTML   = (ai.findings || []).map(f => `<li>${f}</li>`).join('');
 }
 
+/* ─── AI Price Prediction ─────────────────────────────────────────────────── */
+async function runPrediction() {
+  const d = _currentTokenData;
+  if (!d?.address) return showToast('Scan a token first');
+
+  const btn = $('predictionBtn');
+  const content = $('predictionContent');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+
+  const steps = [
+    { icon: '🔍', text: 'Fetching on-chain data…' },
+    { icon: '📊', text: 'Analyzing price momentum…' },
+    { icon: '🐋', text: 'Scanning whale activity…' },
+    { icon: '🔒', text: 'Running security checks…' },
+    { icon: '🤖', text: 'Generating prediction…' },
+  ];
+  let stepIdx = 0;
+  content.innerHTML = `
+    <div style="padding:32px 0;display:flex;flex-direction:column;align-items:center;gap:16px">
+      <div id="predStepIcon" style="font-size:28px;transition:opacity .3s">${steps[0].icon}</div>
+      <div id="predStepText" style="font-size:12px;color:var(--text-muted);font-weight:600;letter-spacing:.5px;transition:opacity .3s">${steps[0].text}</div>
+      <div style="width:260px;height:4px;background:var(--border-light);border-radius:2px;overflow:hidden">
+        <div id="predProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#27c97f,#4a90e2);border-radius:2px;transition:width .4s ease"></div>
+      </div>
+      <div id="predPct" style="font-size:10px;color:var(--text-muted)">0%</div>
+    </div>`;
+
+  const _stepInterval = setInterval(() => {
+    stepIdx = Math.min(stepIdx + 1, steps.length - 1);
+    const pct = Math.round((stepIdx / (steps.length - 1)) * 85);
+    const icon = $('predStepIcon'); const txt = $('predStepText'); const bar = $('predProgressBar'); const pctEl = $('predPct');
+    if (icon) { icon.style.opacity = '0'; setTimeout(() => { if ($('predStepIcon')) { $('predStepIcon').textContent = steps[stepIdx].icon; $('predStepIcon').style.opacity = '1'; } }, 150); }
+    if (txt)  { txt.style.opacity  = '0'; setTimeout(() => { if ($('predStepText'))  { $('predStepText').textContent  = steps[stepIdx].text;  $('predStepText').style.opacity  = '1'; } }, 150); }
+    if (bar)  bar.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+  }, 600);
+
+  try {
+    const [res] = await Promise.all([
+      fetch(`${API_BASE}/predict`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ address: d.address, chain: d.chain || d.networkId || 'ethereum' }),
+      }),
+      new Promise(r => setTimeout(r, 3000)), // minimum 3s so all steps show
+    ]);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    clearInterval(_stepInterval);
+    // Complete progress bar briefly before showing result
+    const bar = $('predProgressBar'); const pctEl = $('predPct'); const txt = $('predStepText'); const icon = $('predStepIcon');
+    if (bar) bar.style.width = '100%';
+    if (pctEl) pctEl.textContent = '100%';
+    if (icon) icon.textContent = '✅';
+    if (txt) txt.textContent = 'Prediction ready!';
+    await new Promise(r => setTimeout(r, 500));
+
+    const sigColor = { bullish:'#27c97f', bearish:'#F0484B', neutral:'#F5A623' };
+    const sigIcon  = { bullish:'▲', bearish:'▼', neutral:'◆' };
+    const sigLabel = { bullish:'BULLISH', bearish:'BEARISH', neutral:'NEUTRAL' };
+    const c = sigColor[data.signal] || '#F5A623';
+
+    content.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <!-- Verdict -->
+        <div style="background:${c}10;border:1px solid ${c}30;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;letter-spacing:.5px">PREDICTION</div>
+          <div style="font-size:28px;font-weight:800;color:${c}">${sigIcon[data.signal]} ${sigLabel[data.signal]}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${data.timeframe}</div>
+        </div>
+        <!-- Confidence -->
+        <div style="background:var(--bg-card);border:1px solid var(--border-light);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;letter-spacing:.5px">CONFIDENCE</div>
+          <div style="font-size:28px;font-weight:800;color:var(--text-primary)">${data.confidence}%</div>
+          <div style="height:6px;background:var(--border-light);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${data.confidence}%;background:${c};border-radius:3px;transition:width .6s ease"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Bull/Bear score bar -->
+      <div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:4px">
+          <span>🟢 Bull Score: ${data.bullScore}</span><span>Bear Score: ${data.bearScore} 🔴</span>
+        </div>
+        <div style="display:flex;height:8px;border-radius:4px;overflow:hidden">
+          <div style="flex:${data.bullScore};background:#27c97f"></div>
+          <div style="flex:${data.bearScore};background:#F0484B"></div>
+        </div>
+      </div>
+      <!-- Summary -->
+      <div style="background:var(--bg-card);border:1px solid var(--border-light);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--text-secondary);line-height:1.6">
+        ${data.summary}
+      </div>
+      <!-- Signals -->
+      <div style="font-size:10px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;margin-bottom:8px">SIGNAL BREAKDOWN</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${(data.signals || []).map(s => `
+          <div style="display:grid;grid-template-columns:140px 70px 1fr;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-card);border:1px solid var(--border-light);border-radius:8px;font-size:11px">
+            <span style="font-weight:600;color:var(--text-primary)">${s.label}</span>
+            <span style="color:${sigColor[s.verdict]||'#F5A623'};font-weight:700;font-size:10px">${sigIcon[s.verdict]||'◆'} ${(s.verdict||'').toUpperCase()}</span>
+            <span style="color:var(--text-muted)">${s.detail}</span>
+          </div>`).join('')}
+      </div>
+      <div style="margin-top:12px;font-size:9px;color:var(--text-muted);text-align:center;font-style:italic">
+        ⚠ This is not financial advice. Generated ${new Date(data.generatedAt).toLocaleTimeString()} · Rule-based engine
+      </div>`;
+  } catch(e) {
+    clearInterval(_stepInterval);
+    content.innerHTML = `<div style="text-align:center;padding:30px;color:#F0484B;font-size:12px">⚠ ${e.message}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ ANALYZE'; }
+  }
+}
+
 /* ─── Holder Stats ────────────────────────────────────────────────────────── */
 function renderHolderStats(d) {
   const hs  = d.holderStats || {};
@@ -1443,6 +1587,56 @@ function renderHolderStats(d) {
   });
 }
 
+/* ─── Social Sentiment ────────────────────────────────────────────────────── */
+function renderSocial(d) {
+  const socials  = d.socials  || [];
+  const websites = d.websites || [];
+
+  const buys  = d.txns?.buys24h  || d.buys24h  || 0;
+  const sells = d.txns?.sells24h || d.sells24h || 0;
+  const total = buys + sells;
+  const bullPct = total > 0 ? Math.round((buys / total) * 100) : 50;
+  const bearPct = 100 - bullPct;
+  const sentLabel = bullPct >= 60 ? 'Bullish' : bullPct <= 40 ? 'Bearish' : 'Neutral';
+  const sentColor = bullPct >= 60 ? '#27c97f' : bullPct <= 40 ? '#ef4444' : '#f59e0b';
+
+  const iconMap = {
+    twitter:  { svg: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>`, label: 'X' },
+    telegram: { svg: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>`, label: 'TG' },
+    discord:  { svg: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>`, label: 'DC' },
+    website:  { svg: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`, label: 'Web' },
+  };
+
+  const links = [];
+  for (const w of websites) links.push({ type: 'website', url: w });
+  for (const s of socials)  links.push({ type: s.type?.toLowerCase() || 'website', url: s.url });
+
+  // ── Render into token header ──
+  const sentItem  = $('headerSocialItem');
+  const linksItem = $('headerSocialLinks');
+  if (sentItem) {
+    $('headerSentimentLabel').textContent = sentLabel;
+    $('headerSentimentLabel').style.color = sentColor;
+    $('headerBullBar').style.width = bullPct + '%';
+    $('headerBearBar').style.width = bearPct + '%';
+    $('headerSentimentSub').textContent = `${bullPct}% buys · ${total.toLocaleString()} txns`;
+    sentItem.style.display = 'flex';
+  }
+  if (linksItem && links.length) {
+    $('headerLinksRow').innerHTML = links.map(l => {
+      const ico = iconMap[l.type] || iconMap.website;
+      return `<a href="${l.url}" target="_blank" rel="noopener"
+        title="${l.url}"
+        style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:5px;color:var(--text-muted);text-decoration:none;font-size:10px;font-weight:600;transition:color .15s,border-color .15s"
+        onmouseover="this.style.color='var(--text-primary)';this.style.borderColor='var(--accent)'"
+        onmouseout="this.style.color='var(--text-muted)';this.style.borderColor='var(--border-light)'">
+        ${ico.svg}${ico.label}
+      </a>`;
+    }).join('');
+    linksItem.style.display = 'flex';
+  }
+}
+
 /* ─── Volume Profile (real 24h period data) ──────────────────────────────── */
 function renderVolumeChart(d) {
   if (volumeChart) { volumeChart.destroy(); volumeChart = null; }
@@ -1490,9 +1684,9 @@ BLOOMBARK TERMINAL APPS — AI INSIDER REPORT
 ============================================
 Generated : ${new Date().toLocaleString()}
 Contract  : ${d.contract}
-Token     : ${d.name} (${d.symbol}) on Solana
+Token     : ${d.name} (${d.symbol}) on ${d.network || 'EVM'}
 DEX       : ${d.dexId || 'N/A'} | Pairs: ${d.allPairs || 1}
-Source    : DexScreener + Solana RPC
+Source    : DexScreener + GeckoTerminal
 
 PRICE DATA  (LIVE)
 ──────────────────
@@ -1513,7 +1707,7 @@ Sells 24h   : ${fmt.num(d.sells24h)}
 Buy Ratio   : ${d.buyRatio || d.txns?.buyRatio24h || 'N/A'}%
 Token Age   : ${d.created}
 
-HOLDER DATA  (SOLANA RPC)
+HOLDER DATA  (ON-CHAIN)
 ──────────────────────────
 Top 10 Hold : ${(d.top10Pct||0).toFixed(2)}% of supply
 Total Supply: ${fmt.token(d.totalSupply, d.symbol)}
@@ -1541,7 +1735,7 @@ ALERTS:
 ${(d.alerts||[]).map(a => `  ⚠ ${a.label}: ${a.desc}`).join('\n')}
 
 ────────────────────────────────────────────
-Bloombark Terminal Apps  |  Data: DexScreener + Solana RPC
+Bloombark Terminal Apps  |  Data: DexScreener + GeckoTerminal
 `.trim();
 }
 
@@ -1577,6 +1771,7 @@ async function loadTrending() {
   const scanBtn    = () => $('wtScanBtn');
   const copyBtn    = () => $('wtCopyBtn');
   const chainSel   = () => $('wtChainSelect');
+  const chainWrap  = () => $('wtChainSelectWrap');
   const detectEl   = () => $('wtChainDetect');
   const content    = () => $('wtContent');
   const empty      = () => $('wtEmpty');
@@ -1584,22 +1779,17 @@ async function loadTrending() {
   const loadingMsg = () => $('wtLoadingMsg');
 
   function isEvm(addr)    { return /^0x[0-9a-fA-F]{40}$/.test(addr); }
-  function isSolana(addr) { return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr) && !isEvm(addr); }
 
   function onInput() {
     const val = (inp()?.value || '').trim();
     if (isEvm(val)) {
       detectEl().textContent = '⬡ EVM address detected — select chain below';
       detectEl().style.color = '#4a90d9';
-      if (chainSel()) chainSel().style.display = 'block';
-    } else if (isSolana(val)) {
-      detectEl().textContent = '◎ Solana address detected';
-      detectEl().style.color = '#27C97F';
-      if (chainSel()) chainSel().style.display = 'none';
+      if (chainWrap()) chainWrap().style.display = 'flex';
     } else {
-      detectEl().textContent = val.length > 5 ? '⚠ Unrecognized address format' : '';
+      detectEl().textContent = val.length > 5 ? '⚠ Unrecognized address format — EVM wallets only (0x…)' : '';
       detectEl().style.color = '#F5A623';
-      if (chainSel()) chainSel().style.display = 'none';
+      if (chainWrap()) chainWrap().style.display = 'none';
     }
   }
 
@@ -1616,8 +1806,8 @@ async function loadTrending() {
   function renderSummary(data) {
     const el = $('wtSummary');
     if (!el) return;
-    const chain = data.chain === 'solana' ? 'Solana' : (data.evmChain||'EVM').charAt(0).toUpperCase()+(data.evmChain||'evm').slice(1);
-    const chainColor = data.chain === 'solana' ? '#9945FF' : '#4a90d9';
+    const chain = (data.evmChain||'EVM').charAt(0).toUpperCase()+(data.evmChain||'evm').slice(1);
+    const chainColor = '#4a90d9';
     el.innerHTML = [
       { label:'Total Value',  value: fmtUsd(data.totalUsd), color:'#27C97F' },
       { label:'Network',      value: chain,                  color: chainColor },
@@ -1636,7 +1826,7 @@ async function loadTrending() {
     if ($('wtHoldingCount')) $('wtHoldingCount').textContent = `${tokens.length} tokens`;
     if (!tokens.length) { el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px">No token holdings found</div>`; return; }
 
-    const explorerBase = chain === 'solana' ? 'https://solscan.io/token/' : 'https://etherscan.io/token/';
+    const explorerBase = { ethereum:'https://etherscan.io/token/', base:'https://basescan.org/token/', robinhood:'https://robinhoodchain.blockscout.com/token/' }[chain] || 'https://etherscan.io/token/';
     el.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 80px 90px 80px;padding:6px 12px;font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:.5px;border-bottom:1px solid var(--border-light)">
         <span>TOKEN</span><span style="text-align:right">BALANCE</span><span style="text-align:right">PRICE</span><span style="text-align:right">VALUE</span>
@@ -1660,7 +1850,7 @@ async function loadTrending() {
       }).join('')}`;
   }
 
-  let _allTxs = [], _txChain = 'solana', _txNextCursor = null, _txAddress = '';
+  let _allTxs = [], _txChain = 'ethereum', _txNextCursor = null, _txAddress = '';
 
   function renderTxHistory(txs, chain, nextCursor = null, address = '') {
     _allTxs = txs; _txChain = chain; _txNextCursor = nextCursor; _txAddress = address;
@@ -1668,12 +1858,12 @@ async function loadTrending() {
   }
 
   function _txRow(tx) {
-    const txBase = { solana:'https://solscan.io/tx/', ethereum:'https://etherscan.io/tx/', base:'https://basescan.org/tx/', bsc:'https://bscscan.com/tx/', arbitrum:'https://arbiscan.io/tx/' };
+    const txBase = { ethereum:'https://etherscan.io/tx/', base:'https://basescan.org/tx/', arbitrum:'https://arbiscan.io/tx/', robinhood:'https://robinhoodchain.blockscout.com/tx/' };
     const explorer = txBase[_txChain] || txBase.ethereum;
     const TYPE_COLOR = { Send:'#F0484B', Receive:'#27C97F', Swap:'#F5A623', Transfer:'#4a90d9' };
     const hash   = tx.signature || tx.hash || '';
     const color  = TYPE_COLOR[tx.type] || '#8b92a8';
-    const valStr = tx.value > 0 ? fmtUsd(tx.value * (_txChain==='solana'?150:3000)) : (tx.amtOut > 0 ? fmtNum(tx.amtOut) : '—');
+    const valStr = tx.value > 0 ? fmtUsd(tx.value * 3000) : (tx.amtOut > 0 ? fmtNum(tx.amtOut) : '—');
     const detail = tx.type === 'Swap'
       ? `${fmtNum(tx.amtOut)} → ${fmtNum(tx.amtIn)}`
       : (tx.to ? tx.to.slice(0,6)+'…'+tx.to.slice(-4) : tx.short || '—');
@@ -1709,7 +1899,7 @@ async function loadTrending() {
     if (!_privyUser) { openWalletModal(); return; }
 
     show('wtLoading');
-    if (loadingMsg()) loadingMsg().textContent = `Fetching ${isSolana(address) ? 'Solana' : evmChain} wallet data…`;
+    if (loadingMsg()) loadingMsg().textContent = `Fetching ${evmChain} wallet data…`;
 
     try {
       const res  = await fetch(`${API_BASE}/wallet-tracker`, {
@@ -1721,8 +1911,8 @@ async function loadTrending() {
 
       show('wtContent');
       renderSummary(data);
-      renderHoldings(data.tokens || [], data.chain === 'solana' ? 'solana' : evmChain);
-      renderTxHistory(data.txs || [], data.chain === 'solana' ? 'solana' : evmChain, data.nextCursor || null, address);
+      renderHoldings(data.tokens || [], evmChain);
+      renderTxHistory(data.txs || [], evmChain, data.nextCursor || null, address);
     } catch (e) {
       show('wtEmpty');
       if (detectEl()) { detectEl().textContent = '⚠ ' + e.message; detectEl().style.color = '#F0484B'; }
@@ -1780,10 +1970,10 @@ let _dashData    = null;
 let _dashChain   = 'all';
 
 const CHAIN_COLOR = {
-  solana:'#9945FF', ethereum:'#627EEA', bsc:'#F3BA2F', base:'#0052FF',
+  ethereum:'#627EEA', base:'#0052FF',
   arbitrum:'#28A0F0', tron:'#FF0013', polygon:'#8247E5', avalanche:'#E84142',
   optimism:'#FF0420', linea:'#61DFFF', scroll:'#FFDBB5', mantle:'#60CF8B',
-  zksync:'#8C8DFC',
+  zksync:'#8C8DFC', robinhood:'#00C805',
 };
 
 function dashFmtPrice(v) {
@@ -1937,10 +2127,9 @@ function renderNewPairs(items, el) {
 function renderDashFilter() {
   const bar = $('dashFilterBar');
   const STATIC_CHAINS = [
-    { id: 'solana',   label: 'Solana' },
-    { id: 'ethereum', label: 'Ethereum' },
-    { id: 'bsc',      label: 'BSC' },
-    { id: 'base',     label: 'Base' },
+    { id: 'ethereum',  label: 'Ethereum' },
+    { id: 'base',      label: 'Base' },
+    { id: 'robinhood', label: 'Robinhood' },
   ];
   bar.innerHTML = `<button class="dash-filter-btn ${_dashChain==='all'?'active':''}" data-chain="all">All Chains</button>` +
     STATIC_CHAINS.map(c => `<button class="dash-filter-btn ${_dashChain===c.id?'active':''}" data-chain="${c.id}">${c.label}</button>`).join('');
@@ -1962,7 +2151,7 @@ function _setDashLoading() {
 
 async function fetchDashboard(chain) {
   _dashChain = chain;
-  const label = chain === 'all' ? 'All Chains' : ({ solana:'Solana', ethereum:'Ethereum', bsc:'BSC', base:'Base' }[chain] || chain);
+  const label = chain === 'all' ? 'All Chains' : ({ ethereum:'Ethereum', base:'Base', robinhood:'Robinhood' }[chain] || chain);
   $('dashVolSub').textContent   = `${label} · 24h`;
   $('dashTrendSub').textContent = label;
   $('dashNewSub').textContent   = label;
@@ -1974,6 +2163,11 @@ async function fetchDashboard(chain) {
     const res  = await fetch(url);
     const json = await res.json();
     if (!json.success) throw new Error(json.error);
+    if (json.empty) {
+      const msg = `<div class="dash-loading" style="color:var(--text-muted);text-align:center;padding:32px 0">🚧 ${label} data is coming soon — chain not yet indexed</div>`;
+      ['dashVolumeGrid','dashTrendingList','dashNewPairsList'].forEach(id => { const el = $(id); if (el) el.innerHTML = msg; });
+      return;
+    }
     _dashData = json.data;
     renderBestVolume(_dashData.bestVolume);
     renderDashList(_dashData.trending,  $('dashTrendingList'));
@@ -2004,12 +2198,21 @@ function openWalletModal() {
   const modal = document.getElementById('walletModal');
   if (!modal) return;
   if (_privyUser) {
-    // Already connected — show disconnect option
+    // Already connected — show profile (view only) + disconnect
     const addr = _privyUser._displayAddress || _privyUser.wallet?.address || _privyUser.linked_accounts?.find(a => a.type === 'wallet')?.address || _privyUser.email?.address || _privyUser.linked_accounts?.find(a => a.type === 'email')?.address || '';
-    const initials = addr ? addr.charAt(0).toUpperCase() : 'P';
+    const displayName = _userProfile?.displayName || _chatName || '';
+    const avatar = _userProfile?.avatar || '';
+    const fallbackLetter = (displayName || addr || '?').charAt(0).toUpperCase();
+    const avatarHtml = avatar
+      ? `<div style="width:64px;height:64px;border-radius:50%;overflow:hidden;border:2px solid #27c97f55;margin:0 auto 10px"><img src="${avatar}" style="width:100%;height:100%;object-fit:cover"></div>`
+      : `<div style="width:64px;height:64px;border-radius:50%;background:#27c97f22;border:2px solid #27c97f55;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#27c97f;margin:0 auto 10px">${fallbackLetter}</div>`;
+    const nameHtml = displayName
+      ? `<div style="font-size:14px;font-weight:700;color:#e2e8f0;margin-bottom:6px">${displayName}</div>`
+      : '';
     document.getElementById('walletModalBody').innerHTML = `
       <div style="text-align:center;padding:10px 0 16px">
-        <div style="width:44px;height:44px;border-radius:50%;background:#27c97f22;border:2px solid #27c97f55;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#27c97f;margin:0 auto 10px">${initials}</div>
+        ${avatarHtml}
+        ${nameHtml}
         <div style="display:inline-flex;align-items:center;gap:5px;background:#27c97f15;border:1px solid #27c97f30;border-radius:20px;padding:3px 12px;margin-bottom:10px">
           <span style="width:6px;height:6px;border-radius:50%;background:#27c97f;display:inline-block;flex-shrink:0"></span>
           <span style="font-size:10px;color:#27c97f;font-weight:600">CONNECTED</span>
@@ -2025,7 +2228,7 @@ function openWalletModal() {
         </button>
         <button onclick="privyLogout()" style="width:100%;background:#ff4d4d12;border:1px solid #ff4d4d44;border-radius:10px;padding:10px;cursor:pointer;color:#ff6b6b;font-size:12px;font-weight:700;letter-spacing:0.5px">DISCONNECT</button>
       </div>
-      <div style="text-align:center;font-size:10px;color:#4b5563">Powered by Privy</div>`;
+      <div style="text-align:center;font-size:10px;color:#4b5563">EVM wallets · MetaMask</div>`;
   } else {
     document.getElementById('walletModalBody').innerHTML = `
       <button id="mmBtn" onclick="privyConnectMM()" style="width:100%;display:flex;align-items:center;gap:12px;background:#13161d;border:1px solid #2d3144;border-radius:10px;padding:14px 16px;cursor:pointer;margin-bottom:10px;transition:border-color 0.15s">
@@ -2035,28 +2238,7 @@ function openWalletModal() {
           <div style="font-size:10px;color:#8b92a8">Browser extension wallet</div>
         </div>
       </button>
-      <div style="display:flex;align-items:center;gap:8px;margin:4px 0 10px">
-        <div style="flex:1;height:1px;background:#2d3144"></div>
-        <span style="font-size:10px;color:#8b92a8">OR</span>
-        <div style="flex:1;height:1px;background:#2d3144"></div>
-      </div>
-      <div id="emailLoginStep1">
-        <div style="font-size:10px;color:#8b92a8;margin-bottom:6px;letter-spacing:0.5px">EMAIL</div>
-        <div style="display:flex;gap:8px">
-          <input id="privyEmailInput" type="text" inputmode="email" placeholder="Enter your email" autocomplete="chrome-off" name="bb_email_nofill" spellcheck="false" style="flex:1;background:#13161d;border:1px solid #2d3144;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:12px;font-family:monospace;outline:none" onkeydown="if(event.key==='Enter')privySendCode()"/>
-          <button onclick="privySendCode()" style="background:#27C97F;border:none;border-radius:8px;padding:10px 14px;color:#000;font-size:11px;font-weight:700;cursor:pointer;font-family:monospace;white-space:nowrap">SEND CODE</button>
-        </div>
-      </div>
-      <div id="emailLoginStep2" style="display:none">
-        <div style="font-size:10px;color:#8b92a8;margin-bottom:4px;letter-spacing:0.5px">OTP CODE</div>
-        <div style="font-size:10px;color:#27C97F;margin-bottom:8px" id="emailLoginHint"></div>
-        <div style="display:flex;gap:8px">
-          <input id="privyOtpInput" type="text" maxlength="6" placeholder="6-digit code" style="flex:1;background:#13161d;border:1px solid #2d3144;border-radius:8px;padding:10px 12px;color:#e2e8f0;font-size:14px;font-family:monospace;outline:none;letter-spacing:4px;text-align:center" onkeydown="if(event.key==='Enter')privyVerifyCode()"/>
-          <button onclick="privyVerifyCode()" style="background:#27C97F;border:none;border-radius:8px;padding:10px 14px;color:#000;font-size:11px;font-weight:700;cursor:pointer;font-family:monospace">VERIFY</button>
-        </div>
-        <button onclick="privyEmailBack()" style="background:none;border:none;color:#8b92a8;font-size:10px;cursor:pointer;margin-top:8px;padding:0">← Back</button>
-      </div>
-      <div style="text-align:center;font-size:10px;color:#8b92a8;padding-top:10px">Powered by Privy</div>`;
+      <div style="text-align:center;font-size:10px;color:#8b92a8;padding-top:10px">EVM wallets · MetaMask</div>`;
   }
   modal.style.display = 'flex';
 }
@@ -2073,6 +2255,13 @@ document.getElementById('walletModal')?.addEventListener('click', function(e) {
 
 function _setWalletConnected(user) {
   _privyUser = user;
+  // Expose wallet for chat (and clear it on disconnect — was previously left stale)
+  if (user) {
+    window._privyWallet = user._displayAddress || user.wallet?.address
+      || user.linked_accounts?.find(a => a.type === 'wallet')?.address || null;
+  } else {
+    window._privyWallet = null;
+  }
   if (user) setTimeout(_loadWatchlist, 200);
   else { _watchlist = new Set(); if (_currentTokenData?.address) _updateWatchlistBtn(_currentTokenData.address); }
   const btn   = document.getElementById('connectWalletBtn');
@@ -2093,11 +2282,123 @@ function _setWalletConnected(user) {
     }
   }
   _updateSidebarProfile(user);
+  // Sync trade panel wallet status
+  if (typeof _tradeWalletStatus === 'function') {
+    _tradeWalletStatus();
+    if (_tradeToken) _loadPayBalance();
+    _holdingsLoaded = false;
+    if (document.getElementById('page-trade')?.classList.contains('active')) tradeLoadHoldings(true);
+  }
+  // Re-check community token-gates for the new/cleared wallet
+  if (typeof checkChatGates === 'function') checkChatGates();
+  // Hide/show the username section in the profile popup to match wallet state
+  if (typeof _chatNameRenderState === 'function') _chatNameRenderState();
 }
+
+// ── Cached profile for current wallet ────────────────────────────────────────
+let _userProfile = null; // { displayName, avatar }
+
+function _setAvatarEl(el, avatar, fallbackLetter) {
+  if (!el) return;
+  if (avatar) {
+    el.innerHTML = `<img src="${avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+  } else {
+    el.innerHTML = fallbackLetter || 'P';
+  }
+}
+
+function _applyProfile(profile) {
+  _userProfile = profile;
+  const fallback = (window._privyWallet || '?').charAt(0).toUpperCase();
+  // Profile popup avatar
+  const popupAvatar = document.getElementById('popupAvatar');
+  _setAvatarEl(popupAvatar, profile?.avatar, fallback);
+  // Sidebar avatar
+  const avatarEl = document.getElementById('sidebarAvatar');
+  _setAvatarEl(avatarEl, profile?.avatar, fallback);
+  // Wallet button top-right
+  const walletBtnAvatar = document.getElementById('walletBtnAvatar');
+  const walletBtnIcon   = document.getElementById('walletBtnIcon');
+  const label = document.getElementById('connectWalletLabel');
+  if (walletBtnAvatar && walletBtnIcon && label && window._privyWallet) {
+    if (profile?.avatar || profile?.displayName) {
+      _setAvatarEl(walletBtnAvatar, profile.avatar, fallback);
+      walletBtnAvatar.style.display = 'flex';
+      walletBtnIcon.style.display   = 'none';
+      if (profile.displayName) label.textContent = profile.displayName;
+    } else {
+      walletBtnAvatar.style.display = 'none';
+      walletBtnIcon.style.display   = '';
+    }
+  }
+  // Pre-fill chat name input
+  const inp = document.getElementById('chatNameInput');
+  if (profile?.displayName && !_chatName) {
+    _chatName = profile.displayName;
+    localStorage.setItem('bloomChatName', _chatName);
+  }
+}
+
+async function loadUserProfile(wallet) {
+  if (!wallet) return;
+  try {
+    const r = await fetch(`${API_BASE}/profile/${encodeURIComponent(wallet)}`);
+    const d = await r.json();
+    if (d.found) _applyProfile({ displayName: d.displayName, avatar: d.avatar });
+    else _applyProfile(null);
+  } catch (_) {}
+}
+
+async function saveProfile() {
+  const wallet = window._privyWallet;
+  if (!wallet) return showToast('Connect wallet first');
+  const name   = (document.getElementById('chatNameInput')?.value || '').trim();
+  const avatar = _pendingProfileAvatar || _userProfile?.avatar || null;
+  const body   = { wallet, displayName: name || _userProfile?.displayName || null, avatar };
+  try {
+    await fetch(`${API_BASE}/profile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    _applyProfile({ displayName: body.displayName, avatar: body.avatar });
+    _pendingProfileAvatar = null;
+    _refreshMyMessages();
+    const st = document.getElementById('profileAvatarStatus');
+    if (st) st.textContent = 'Profile saved!';
+    setTimeout(() => { if (st) st.textContent = 'Click photo to change'; }, 2500);
+  } catch (_) { showToast('Failed to save profile'); }
+}
+
+let _pendingProfileAvatar = null;
+
+window.profileAvatarPicked = function(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)'); input.value = ''; return; }
+  const st = document.getElementById('profileAvatarStatus');
+  if (st) st.textContent = 'Processing…';
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 256;
+      const canvas = document.createElement('canvas');
+      const ratio = Math.min(MAX / img.width, MAX / img.height, 1);
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const b64 = canvas.toDataURL('image/jpeg', 0.85);
+      _pendingProfileAvatar = b64;
+      const popupAvatar = document.getElementById('popupAvatar');
+      _setAvatarEl(popupAvatar, b64, null);
+      if (st) st.textContent = 'Saving…';
+      saveProfile();
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+};
 
 function _updateSidebarProfile(user) {
   const walletEl  = document.getElementById('sidebarWallet');
-  const avatarEl  = document.getElementById('sidebarAvatar');
   const popupFull = document.getElementById('popupWalletFull');
   if (!walletEl) return;
   if (user) {
@@ -2109,14 +2410,25 @@ function _updateSidebarProfile(user) {
     const display = addr || email || '';
     const short = display ? (addr ? addr.slice(0,6)+'…'+addr.slice(-4) : email) : 'Connected';
     walletEl.textContent = short;
-    if (avatarEl) avatarEl.textContent = display.charAt(0).toUpperCase() || 'P';
+    const fallback = display.charAt(0).toUpperCase() || 'P';
     const popupAvatar = document.getElementById('popupAvatar');
-    if (popupAvatar) popupAvatar.textContent = display.charAt(0).toUpperCase() || 'P';
+    _setAvatarEl(popupAvatar, _userProfile?.avatar, fallback);
+    const avatarEl = document.getElementById('sidebarAvatar');
+    _setAvatarEl(avatarEl, _userProfile?.avatar, fallback);
     if (popupFull) popupFull.textContent = display || '—';
+    // Load profile from server
+    loadUserProfile(window._privyWallet);
   } else {
     walletEl.textContent = 'Not connected';
-    if (avatarEl) avatarEl.textContent = 'P';
+    const avatarEl = document.getElementById('sidebarAvatar');
+    if (avatarEl) avatarEl.innerHTML = 'P';
     if (popupFull) popupFull.textContent = '—';
+    _userProfile = null;
+    // Reset wallet button
+    const walletBtnAvatar = document.getElementById('walletBtnAvatar');
+    const walletBtnIcon   = document.getElementById('walletBtnIcon');
+    if (walletBtnAvatar) walletBtnAvatar.style.display = 'none';
+    if (walletBtnIcon)   walletBtnIcon.style.display   = '';
   }
 }
 
@@ -2127,6 +2439,13 @@ window.toggleProfilePopup = () => {
   const open = popup.style.display === 'none';
   popup.style.display   = open ? 'block' : 'none';
   if (overlay) overlay.style.display = open ? 'block' : 'none';
+  if (open) {
+    const inp = document.getElementById('chatNameInput');
+    if (inp) { inp.value = ''; inp.placeholder = _chatName || 'Set your chat name…'; }
+    const st = document.getElementById('profileAvatarStatus');
+    if (st) st.textContent = 'Click photo to change';
+    _chatNameRenderState();
+  }
 };
 window.__profileCopy = () => {
   const addr = document.getElementById('popupWalletFull')?.textContent;
@@ -2135,7 +2454,7 @@ window.__profileCopy = () => {
 };
 window.__profileDisconnect = async () => {
   document.getElementById('profilePopup').style.display = 'none';
-  await disconnectWallet();
+  await privyLogout();
 };
 
 /* ─── Watchlist helpers ───────────────────────────────────────────────────── */
@@ -2241,6 +2560,85 @@ async function removeFromWatchlist(address) {
   } catch(e) { showToast('Error: ' + e.message); }
 }
 
+/* ─── Narrative Tracker ───────────────────────────────────────────────────── */
+let _narrativeData = [];
+let _narrativeSort = 'change';
+
+async function loadNarrative() {
+  const grid = $('narrativeGrid');
+  if (!grid) return;
+  grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-muted);font-size:13px">
+    <div style="font-size:24px;margin-bottom:10px">📡</div>Fetching market narratives…</div>`;
+  try {
+    const res  = await fetch(`${API_BASE}/narrative`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error);
+    _narrativeData = json.data;
+    renderNarrativeGrid();
+
+    // wire sort buttons
+    document.querySelectorAll('.narr-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.narr-sort-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _narrativeSort = btn.dataset.sort;
+        renderNarrativeGrid();
+      });
+    });
+  } catch(e) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:60px;color:#F0484B;font-size:13px">⚠ ${e.message}</div>`;
+  }
+}
+
+function renderNarrativeGrid() {
+  const grid = $('narrativeGrid');
+  if (!grid || !_narrativeData.length) return;
+
+  const sorted = [..._narrativeData].sort((a, b) => {
+    if (_narrativeSort === 'change')  return b.change24h - a.change24h;
+    if (_narrativeSort === 'losers')  return a.change24h - b.change24h;
+    return b.marketCap - a.marketCap;
+  });
+
+  const fmtMcap = v => v >= 1e9 ? `$${(v/1e9).toFixed(2)}B` : v >= 1e6 ? `$${(v/1e6).toFixed(1)}M` : `$${Math.round(v).toLocaleString()}`;
+  const fmtChg  = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+
+  grid.innerHTML = sorted.map(n => {
+    const chg    = n.change24h || 0;
+    const signal = chg > 2 ? 'bullish' : chg < -2 ? 'bearish' : 'neutral';
+    const color  = signal === 'bullish' ? '#27c97f' : signal === 'bearish' ? '#F0484B' : '#6b7280';
+    const coinImgs = (n.topCoins || []).map(url =>
+      `<img src="${url}" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--bg-card);margin-left:-6px;object-fit:cover" onerror="this.style.display='none'">`
+    ).join('');
+
+    return `
+      <div class="narr-card ${signal}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:22px">${n.icon}</span>
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--text-primary)">${n.label}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:15px;font-weight:800;color:${color}">${fmtChg(chg)}</div>
+            <div style="font-size:9px;color:var(--text-muted);margin-top:1px">24h</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">MARKET CAP</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text-primary)">${fmtMcap(n.marketCap)}</div>
+          </div>
+          <div style="display:flex;margin-right:6px">${coinImgs}</div>
+        </div>
+        <div style="margin-top:10px;height:3px;background:var(--border-light);border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${Math.min(100,Math.abs(chg)*3)}%;background:${color};border-radius:2px;transition:width .5s ease"></div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 async function loadLandingCA() {
   const el = document.getElementById('landingCA');
   const copyBtn = document.getElementById('landingCACopy');
@@ -2257,8 +2655,8 @@ async function loadLandingCA() {
 function _renderCA(el, copyBtn, ca) {
   const isComingSoon = ca === 'coming_soon' || !ca;
   if (isComingSoon) {
-    // Mask as 44-char Solana-style address with X's, reveal first/last 4
-    const mask = 'Xxxx' + 'X'.repeat(36) + 'xxxx';
+    // Mask as an EVM-style address (0x + 40 hex chars) with X's
+    const mask = '0xXX' + 'X'.repeat(34) + 'xxxx';
     el.innerHTML = `<span style="opacity:0.35;letter-spacing:1.5px">${mask}</span>`;
     el.style.color = '#4b5563';
     el.title = 'Contract address will be revealed at launch';
@@ -2362,89 +2760,59 @@ async function _bbMe() {
   } catch(_) { return null; }
 }
 
-let _emailForOtp = '';
 
-async function privySendCode() {
-  const input = document.getElementById('privyEmailInput');
-  const email = input?.value?.trim();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    if (input) { input.style.borderColor = '#ff4d4d'; setTimeout(() => input.style.borderColor = '', 1200); }
-    showToast('Enter a valid email address');
-    return;
-  }
-  const btn = input.nextElementSibling;
-  if (btn) { btn.textContent = 'SENDING…'; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
-  try {
-    await window.PrivySDK.sendEmailCode(email);
-    _emailForOtp = email;
-    document.getElementById('emailLoginStep1').style.display = 'none';
-    document.getElementById('emailLoginStep2').style.display = 'block';
-    document.getElementById('emailLoginHint').textContent = `Code sent to ${email}`;
-    setTimeout(() => document.getElementById('privyOtpInput')?.focus(), 100);
-  } catch(e) {
-    showToast('Failed to send code: ' + (e.message || 'Error'));
-    if (btn) { btn.textContent = 'SEND CODE'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
-  }
-}
-
-async function privyVerifyCode() {
-  const input = document.getElementById('privyOtpInput');
-  const code  = input?.value?.trim();
-  if (!code || code.length < 6) {
-    if (input) { input.style.borderColor = '#ff4d4d'; setTimeout(() => input.style.borderColor = '', 1200); }
-    return;
-  }
-  const btn = input.nextElementSibling;
-  if (btn) { btn.textContent = '…'; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
-  try {
-    const user = await window.PrivySDK.loginWithEmailCode(_emailForOtp, code);
-    const emailAddr = user?.email?.address || _emailForOtp;
-    const bbData = await _bbLogin(emailAddr, user, 'email');
-    if (bbData?.displayAddress) user._displayAddress = bbData.displayAddress;
-    _setWalletConnected(user);
-    closeWalletModal();
-    showToast('Logged in via email');
-  } catch(e) {
-    showToast('Invalid code: ' + (e.message || 'Error'));
-    if (btn) { btn.textContent = 'VERIFY'; btn.style.opacity = ''; btn.style.pointerEvents = ''; }
-    if (input) input.value = '';
-  }
-}
-
-function privyEmailBack() {
-  document.getElementById('emailLoginStep1').style.display = 'block';
-  document.getElementById('emailLoginStep2').style.display = 'none';
-}
-
+// Direct MetaMask (EVM) connection — no Privy / SIWE signature required
 async function privyConnectMM() {
   const btn = document.getElementById('mmBtn');
   if (btn) { btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; btn.querySelector('div div').textContent = 'Connecting…'; }
   try {
-    if (!window.PrivySDK) throw new Error('Privy SDK not loaded');
-    const privyUser = await window.PrivySDK.connectMetaMask();
-    const wallet    = privyUser?.wallet?.address
-      || privyUser?.linked_accounts?.find(a => a.type === 'wallet')?.address;
-    if (wallet) await _bbLogin(wallet, privyUser);
-    _setWalletConnected(privyUser);
+    if (!window.ethereum) throw new Error('MetaMask extension not found — install it first');
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const wallet = accounts?.[0];
+    if (!wallet) throw new Error('No account selected');
+    const user = { wallet: { address: wallet }, _displayAddress: wallet };
+    await _bbLogin(wallet, null, 'metamask');
+    localStorage.removeItem('bb_wallet_disconnected'); // user explicitly (re)connected
+    _setWalletConnected(user);
     closeWalletModal();
     showToast('Wallet connected');
   } catch(e) {
-    showToast('Connection failed: ' + (e.message || 'Unknown error'));
-    if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+    const msg = e.code === 4001 ? 'Connection rejected in MetaMask' : (e.message || 'Unknown error');
+    showToast('Connection failed: ' + msg);
+    if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; btn.querySelector('div div').textContent = 'MetaMask'; }
   }
 }
 
 async function privyLogout() {
-  try { await window.PrivySDK?.logout(); } catch(_) {}
   await _bbLogout();
+  localStorage.setItem('bb_wallet_disconnected', '1'); // remember: user explicitly disconnected
   _setWalletConnected(null);
   closeWalletModal();
   showToast('Wallet disconnected');
 }
 
-// Init on page load — try cookie/JWT auto-login first, then Privy session
+// React to account switch / disconnect in MetaMask
+if (window.ethereum?.on) {
+  window.ethereum.on('accountsChanged', (accounts) => {
+    if (!accounts?.length) {
+      localStorage.setItem('bb_wallet_disconnected', '1');
+      _bbLogout(); _setWalletConnected(null); showToast('Wallet disconnected'); return;
+    }
+    localStorage.removeItem('bb_wallet_disconnected');
+    const wallet = accounts[0];
+    _bbLogin(wallet, null, 'metamask');
+    _setWalletConnected({ wallet: { address: wallet }, _displayAddress: wallet });
+    showToast('Switched to ' + wallet.slice(0,6) + '…' + wallet.slice(-4));
+  });
+}
+
+// Init on page load — cookie/JWT auto-login, then silent MetaMask reconnect
 (async function() {
   try {
+    // 0. User explicitly disconnected last time — don't auto-reconnect,
+    //    even though MetaMask itself still has this site "authorized".
+    if (localStorage.getItem('bb_wallet_disconnected') === '1') return;
+
     // 1. Check if backend session still valid (cookie auto-login)
     const bbUser = await _bbMe();
     if (bbUser) {
@@ -2452,20 +2820,1215 @@ async function privyLogout() {
       _setWalletConnected({ _displayAddress: displayAddr, _fromDb: true, id: bbUser.id });
       return;
     }
-    // 2. Fall back to Privy session
-    if (!window.PrivySDK) return;
-    const privyUser = await window.PrivySDK.init();
-    if (privyUser) {
-      const wallet = privyUser?.wallet?.address
-        || privyUser?.linked_accounts?.find(a => a.type === 'wallet')?.address;
-      const email  = privyUser?.email?.address
-        || privyUser?.linked_accounts?.find(a => a.type === 'email')?.address;
-      const identifier = wallet || email;
-      if (identifier) {
-        const bbData = await _bbLogin(identifier, privyUser, wallet ? 'metamask' : 'email');
-        privyUser._displayAddress = bbData?.displayAddress || wallet || null;
-      }
-      _setWalletConnected(privyUser);
+    // 2. Silent reconnect if MetaMask is already authorized for this site
+    if (!window.ethereum) return;
+    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+    const wallet = accounts?.[0];
+    if (wallet) {
+      await _bbLogin(wallet, null, 'metamask');
+      _setWalletConnected({ wallet: { address: wallet }, _displayAddress: wallet });
     }
   } catch(_) {}
 })();
+
+/* ─── Community Chat ────────────────────────────────────────────────────────── */
+const CHAT_ROOMS = {
+  general:   { name: 'General',    icon: '💬', desc: 'General discussion' },
+  trading:   { name: 'Trading',    icon: '📈', desc: 'Token analysis & calls' },
+  alpha:     { name: 'Alpha',      icon: '🔥', desc: 'Early alpha & gems' },
+  freeshill: { name: 'Free Shill', icon: '📣', desc: 'Shill your token here 🚀' },
+  holders:   { name: 'Holders',    icon: '💎', desc: 'Token holders only', gated: true },
+};
+
+// Token-gate state: room -> { ok, balance, minAmount, symbol, network, token }
+let _chatGates = {};
+function _roomLocked(room) {
+  return !!CHAT_ROOMS[room]?.gated && !_chatGates[room]?.ok;
+}
+
+// Update a gated room's sidebar description from its live gate config
+function _applyGateDesc(room) {
+  const g = _chatGates[room];
+  if (g && CHAT_ROOMS[room]) {
+    CHAT_ROOMS[room].desc = `Hold ≥ ${g.minAmount} ${g.symbol} to unlock`;
+  }
+}
+
+// Fetch gate status for the connected wallet, then refresh room UI
+async function checkChatGates() {
+  const wallet = window._privyWallet || 'none';
+  try {
+    const res = await fetch(`${API_BASE}/community/gate/${wallet}`);
+    const j = await res.json();
+    _chatGates = j.gates || {};
+  } catch (_) { _chatGates = {}; }
+  Object.keys(_chatGates).forEach(_applyGateDesc);
+  renderChatRooms();
+  if (CHAT_ROOMS[_chatRoom]?.gated) switchChatRoom(_chatRoom); // refresh lock screen if viewing a gated room
+}
+
+let _chatWs        = null;
+let _chatRoom      = 'general';
+let _chatMessages  = {};   // room -> [{...}]
+let _chatUnread    = {};   // room -> count
+let _chatConnected = false;
+let _chatName      = localStorage.getItem('bloomChatName') || null;
+let _chatNameEdits = parseInt(localStorage.getItem('bloomChatNameEdits') || '0', 10);
+
+const AVATAR_COLORS = ['#f59e0b','#3b82f6','#8b5cf6','#ec4899','#10b981','#ef4444','#06b6d4','#f97316'];
+function avatarColor(str) {
+  let h = 0; for (const c of (str||'?')) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function avatarLetter(name) { return (name||'?')[0].toUpperCase(); }
+
+function fmtChatTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function initCommunity() {
+  checkChatGates();
+  if (_chatWs && _chatWs.readyState === WebSocket.OPEN) {
+    renderChatRooms();
+    switchChatRoom(_chatRoom);
+    return;
+  }
+  renderChatRooms();
+  connectChat();
+}
+
+function connectChat() {
+  const wsUrl = API_BASE.replace('http', 'ws').replace('/api', '') || `ws://${location.host}`;
+  _chatWs = new WebSocket(wsUrl);
+
+  _chatWs.onopen = () => {
+    _chatConnected = true;
+    // Get wallet from Privy or generate anon name
+    const wallet = window._privyWallet || null;
+    _chatName = _chatName || (wallet ? wallet.slice(0,4)+'...'+wallet.slice(-4) : 'Anon#'+Math.floor(Math.random()*9999));
+    _chatWs.send(JSON.stringify({ type: 'chat_join', wallet, displayName: _chatName, avatar: _userProfile?.avatar || null }));
+    if ($('chatNameInput') && !$('chatNameInput').value) $('chatNameInput').placeholder = _chatName;
+    appendChatSystem('general', '🟢 Connected to Bloombark Community');
+  };
+
+  _chatWs.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type === 'chat_history') {
+        _chatMessages = {};
+        for (const [room, msgs] of Object.entries(d.history || {})) _chatMessages[room] = msgs;
+        if (d.gates) { _chatGates = { ..._chatGates, ...d.gates }; Object.keys(_chatGates).forEach(_applyGateDesc); renderChatRooms(); }
+        updateOnlineCount(d.online || 0);
+        if (CHAT_ROOMS[_chatRoom]?.gated) switchChatRoom(_chatRoom); else renderChatMessages();
+      } else if (d.type === 'chat_gate_denied') {
+        showToast(`🔒 ${CHAT_ROOMS[d.room]?.name || 'Channel'} locked — need ≥ ${d.minAmount} ${d.symbol} (you have ${(+d.balance).toFixed(4)})`);
+      } else if (d.type === 'chat_msg') {
+        const msg = d.msg;
+        if (!_chatMessages[msg.room]) _chatMessages[msg.room] = [];
+        _chatMessages[msg.room].push(msg);
+        updateOnlineCount(d.online || 0);
+        if (msg.room === _chatRoom) {
+          appendChatMessage(msg);
+          scrollChatBottom();
+        } else {
+          _chatUnread[msg.room] = (_chatUnread[msg.room] || 0) + 1;
+          updateRoomUnread(msg.room);
+        }
+      } else if (d.type === 'chat_online') {
+        updateOnlineCount(d.online || 0);
+      } else if (d.type === 'chat_nameok') {
+        _chatName = d.displayName;
+        if ($('chatNameInput')) $('chatNameInput').placeholder = _chatName;
+        appendChatSystem(_chatRoom, `✏️ Name changed to "${_chatName}"`);
+      }
+    } catch(_) {}
+  };
+
+  _chatWs.onclose = () => {
+    _chatConnected = false;
+    appendChatSystem('general', '🔴 Disconnected. Reconnecting in 3s…');
+    setTimeout(connectChat, 3000);
+  };
+
+  _chatWs.onerror = () => _chatWs.close();
+}
+
+function renderChatRooms() {
+  const el = $('chatRoomList');
+  if (!el) return;
+  el.innerHTML = Object.entries(CHAT_ROOMS).map(([id, r]) => {
+    const locked = _roomLocked(id);
+    return `
+    <button class="chat-room-btn ${id === _chatRoom ? 'active' : ''}" onclick="switchChatRoom('${id}')" ${locked ? 'title="Locked — holders only"' : ''}>
+      <span>${r.icon}</span><span style="${locked ? 'opacity:.55' : ''}">${r.name}</span>
+      ${locked ? '<span style="margin-left:auto;font-size:11px">🔒</span>' : `<span class="room-unread" id="unread-${id}">${_chatUnread[id]||''}</span>`}
+    </button>`;
+  }).join('');
+}
+
+function switchChatRoom(room) {
+  _chatRoom = room;
+  _chatUnread[room] = 0;
+  const r = CHAT_ROOMS[room];
+  if ($('chatRoomIcon'))  $('chatRoomIcon').textContent  = r.icon;
+  if ($('chatRoomName'))  $('chatRoomName').textContent  = r.name;
+  if ($('chatRoomDesc'))  $('chatRoomDesc').textContent  = r.desc;
+  if ($('chatInput'))     $('chatInput').placeholder     = `Message #${r.name.toLowerCase()}…`;
+  renderChatRooms();
+
+  const locked = _roomLocked(room);
+  const inputBar = $('chatInputBar');
+  if (inputBar) inputBar.style.display = locked ? 'none' : 'flex';
+  if (locked) { renderChatLockScreen(room); return; }
+
+  renderChatMessages();
+  scrollChatBottom();
+}
+
+function renderChatLockScreen(room) {
+  const el = $('chatMessages');
+  if (!el) return;
+  const g = _chatGates[room] || {};
+  const min     = g.minAmount ?? 0;
+  const symbol  = g.symbol || 'TOKEN';
+  const network = g.network || '';
+  const token   = g.token || '';
+  const connected = !!window._privyWallet;
+  const bal = connected
+    ? `You have <b style="color:#e2e8f0">${(+g.balance || 0).toLocaleString('en-US',{maximumFractionDigits:4})} ${symbol}</b>`
+    : 'Connect your wallet to check eligibility';
+  const tokenLine = token
+    ? `<div style="font-size:10px;color:#4b5563;font-family:monospace;margin-top:2px">${symbol}${network ? ' · ' + network : ''} · ${token.slice(0,10)}…${token.slice(-8)}</div>`
+    : '';
+  el.innerHTML = `
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 20px;gap:14px">
+      <div style="font-size:52px;line-height:1">🔒</div>
+      <div style="font-size:17px;font-weight:800;color:var(--text-primary)">Holders Only</div>
+      <div style="font-size:13px;color:var(--text-muted);line-height:1.6;max-width:360px">
+        This channel is locked. You need to hold at least <b style="color:#27c97f">${min} ${symbol}</b>${network ? ` on <b style="color:#27c97f">${network}</b>` : ''} to unlock it.<br>${bal}
+      </div>
+      ${tokenLine}
+      <div style="display:flex;gap:10px;margin-top:6px">
+        ${connected
+          ? `<button onclick="checkChatGates()" style="background:#27c97f15;border:1px solid #27c97f40;color:#27c97f;font-size:12px;font-weight:700;padding:9px 20px;border-radius:8px;cursor:pointer">↻ Re-check balance</button>`
+          : `<button onclick="openWalletModal()" style="background:#27c97f;border:none;color:#000;font-size:12px;font-weight:800;padding:9px 22px;border-radius:8px;cursor:pointer">Connect Wallet</button>`}
+      </div>
+    </div>`;
+}
+
+function renderChatMessages() {
+  const el = $('chatMessages');
+  if (!el) return;
+  const msgs = _chatMessages[_chatRoom] || [];
+  if (!msgs.length) {
+    el.innerHTML = `<div class="chat-system">No messages yet. Say hi! 👋</div>`;
+    return;
+  }
+  el.innerHTML = msgs.map(m => buildMsgHtml(m)).join('');
+}
+
+function _refreshMyMessages() {
+  // Update displayName + avatar on all cached messages that belong to me, then re-render
+  const wallet = window._privyWallet;
+  for (const msgs of Object.values(_chatMessages)) {
+    for (const m of msgs) {
+      if (wallet && m.wallet === wallet) {
+        if (_chatName)            m.displayName = _chatName;
+        if (_userProfile?.avatar !== undefined) m.avatar = _userProfile?.avatar || null;
+      }
+    }
+  }
+  renderChatMessages();
+}
+
+function isMine(m) {
+  if (_chatName && m.displayName === _chatName) return true;
+  if (window._privyWallet && m.wallet === window._privyWallet) return true;
+  return false;
+}
+
+function _chatAvatarHtml(m, size = 30) {
+  const color  = avatarColor(m.wallet || m.displayName);
+  const letter = avatarLetter(m.displayName);
+  if (m.avatar) {
+    return `<div style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="${m.avatar}" style="width:100%;height:100%;object-fit:cover"></div>`;
+  }
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.4)}px;font-weight:800;color:#000;flex-shrink:0">${letter}</div>`;
+}
+
+function buildMsgHtml(m) {
+  const mine    = isMine(m);
+  const safe    = (m.text||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const avatarHtml = _chatAvatarHtml(m, 30);
+
+  const textHtml = safe.replace(/(https?:\/\/[^\s]+)/g, (url) => {
+    if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url))
+      return `<br><img src="${url}" style="max-width:260px;max-height:200px;border-radius:8px;margin-top:6px;cursor:pointer;display:block" onclick="chatZoomImg('${url}')" onerror="this.style.display='none'">`;
+    return `<a href="${url}" target="_blank" rel="noopener" style="color:${mine?'#a7f3d0':'var(--accent-blue)'}">${url}</a>`;
+  });
+  const imgHtml = m.imgData
+    ? `<div style="margin-top:6px"><img src="${m.imgData}" style="max-width:260px;max-height:200px;border-radius:8px;cursor:pointer;display:block" onclick="chatZoomImg(this.src)"></div>`
+    : '';
+
+  if (mine) {
+    return `<div style="display:flex;justify-content:flex-end;padding:3px 0;gap:8px;align-items:flex-end">
+      <div style="max-width:72%;display:flex;flex-direction:column;align-items:flex-end">
+        <span style="font-size:10px;color:var(--text-muted);margin-bottom:3px">${fmtChatTime(m.ts)}</span>
+        <div style="background:#27c97f;color:#000;padding:9px 13px;border-radius:16px 16px 4px 16px;font-size:13px;line-height:1.5;word-break:break-word;max-width:100%">
+          ${textHtml}${imgHtml}
+        </div>
+      </div>
+      ${avatarHtml}
+    </div>`;
+  }
+
+  return `<div style="display:flex;padding:3px 0;gap:8px;align-items:flex-end">
+    ${avatarHtml}
+    <div style="max-width:72%;display:flex;flex-direction:column;align-items:flex-start">
+      <span style="font-size:10px;color:var(--text-muted);margin-bottom:3px">${m.displayName} · ${fmtChatTime(m.ts)}</span>
+      <div style="background:var(--bg-card);border:1px solid var(--border-light);color:var(--text-primary);padding:9px 13px;border-radius:16px 16px 16px 4px;font-size:13px;line-height:1.5;word-break:break-word;max-width:100%">
+        ${textHtml}${imgHtml}
+      </div>
+    </div>
+  </div>`;
+}
+
+function appendChatMessage(m) {
+  const el = $('chatMessages');
+  if (!el) return;
+  // Remove "no messages" placeholder
+  if (el.querySelector('.chat-system')) el.innerHTML = '';
+  const div = document.createElement('div');
+  div.innerHTML = buildMsgHtml(m);
+  el.appendChild(div.firstElementChild);
+}
+
+function appendChatSystem(room, text) {
+  if (room !== _chatRoom) return;
+  const el = $('chatMessages');
+  if (!el) return;
+  const div = document.createElement('div');
+  div.className = 'chat-system';
+  div.textContent = text;
+  el.appendChild(div);
+  scrollChatBottom();
+}
+
+function scrollChatBottom() {
+  const el = $('chatMessages');
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function updateOnlineCount(n) {
+  if ($('chatOnlineCount'))   $('chatOnlineCount').textContent  = n;
+  if ($('chatOnlineHeader'))  $('chatOnlineHeader').textContent = `${n} online`;
+  if ($('chatOnlineBadge')) {
+    $('chatOnlineBadge').textContent = n;
+    $('chatOnlineBadge').style.display = n > 0 ? 'inline' : 'none';
+  }
+}
+
+function updateRoomUnread(room) {
+  const el = $(`unread-${room}`);
+  if (!el) return;
+  const n = _chatUnread[room] || 0;
+  el.textContent = n || '';
+  el.style.display = n > 0 ? 'inline' : 'none';
+}
+
+let _chatPendingImg = null;
+
+function chatSend() {
+  const inp = $('chatInput');
+  if (!inp || !_chatConnected || !_chatWs) return;
+  if (_roomLocked(_chatRoom)) { showToast('🔒 This channel is locked'); return; }
+  const text = inp.value.trim();
+  if (!text && !_chatPendingImg) return;
+  _chatWs.send(JSON.stringify({ type: 'chat_msg', room: _chatRoom, text, imgData: _chatPendingImg || null }));
+  inp.value = '';
+  chatClearImg();
+  closeEmojiPicker();
+}
+
+function chatLoadImg(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { alert('Image too large (max 2MB)'); input.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    // Compress via canvas
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 800;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) { if (w > h) { h = h/w*MAX; w = MAX; } else { w = w/h*MAX; h = MAX; } }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      _chatPendingImg = canvas.toDataURL('image/jpeg', 0.75);
+      const preview = $('chatImgPreview');
+      const thumb = $('chatImgThumb');
+      if (preview && thumb) { thumb.src = _chatPendingImg; preview.style.display = 'flex'; }
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+function chatClearImg() {
+  _chatPendingImg = null;
+  const preview = $('chatImgPreview');
+  if (preview) preview.style.display = 'none';
+  const inp = $('chatImgInput');
+  if (inp) inp.value = '';
+}
+
+function chatZoomImg(src) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:#000b;z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+  overlay.innerHTML = `<img src="${src}" style="max-width:90vw;max-height:90vh;border-radius:10px;box-shadow:0 0 40px #0008">`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+// ── Emoji Picker ──
+const EMOJIS = [
+  '😀','😂','🤣','😍','🥰','😎','🤩','🥳','😤','🤔','🫡','🤫','😱','🫣',
+  '🔥','💎','🚀','🌙','💰','📈','📉','💸','🤑','💯','✅','❌','⚡','👀','🫀',
+  '👍','👎','👏','🙏','💪','🫶','✌️','🤝','💀','👻','🎯','🎰','🎲','🏆',
+  '🐋','🦈','🐂','🐸','🦍','🐉','🦁','🐺','🦊','🐻','🐼','🐨','🦄',
+  '💬','📣','🔔','⚠️','❓','❗','💡','🔑','🛡️','⚔️','🎪','🎭','🎨',
+];
+
+let _emojiOpen = false;
+
+function toggleEmojiPicker() {
+  const el = $('emojiPicker');
+  if (!el) return;
+  _emojiOpen = !_emojiOpen;
+  if (_emojiOpen) {
+    el.style.display = 'flex';
+    el.innerHTML = EMOJIS.map(e =>
+      `<span onclick="insertEmoji('${e}')" style="font-size:20px;cursor:pointer;padding:4px;border-radius:4px;line-height:1;transition:transform .1s"
+        onmouseover="this.style.transform='scale(1.3)'" onmouseout="this.style.transform=''">${e}</span>`
+    ).join('');
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function closeEmojiPicker() {
+  _emojiOpen = false;
+  const el = $('emojiPicker');
+  if (el) el.style.display = 'none';
+}
+
+function insertEmoji(e) {
+  const inp = $('chatInput');
+  if (!inp) return;
+  const pos = inp.selectionStart || inp.value.length;
+  inp.value = inp.value.slice(0, pos) + e + inp.value.slice(pos);
+  inp.focus();
+  inp.setSelectionRange(pos + e.length, pos + e.length);
+}
+
+const MAX_NAME_EDITS = 2;
+
+function _chatNameRenderState() {
+  const section = $('usernameSection');
+  const view    = $('chatNameView');
+  const edit    = $('chatNameEdit');
+  const display = $('chatNameDisplay');
+  const editBtn = $('chatNameEditBtn');
+  const counter = $('chatNameEditsLeft');
+  if (!view || !edit) return;
+
+  // No wallet connected → hide the username section entirely
+  if (!window._privyWallet) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  if (section) section.style.display = '';
+
+  const remaining = MAX_NAME_EDITS - _chatNameEdits;
+
+  if (_chatName) {
+    // Show view state
+    view.style.display = 'flex';
+    edit.style.display = 'none';
+    if (display) display.textContent = _chatName;
+    if (editBtn) {
+      if (remaining <= 0) {
+        editBtn.style.display = 'none';
+      } else {
+        editBtn.style.display = '';
+        editBtn.disabled = false;
+      }
+    }
+    if (counter) counter.textContent = remaining > 0 ? `${remaining} edit${remaining === 1 ? '' : 's'} left` : 'no edits left';
+  } else {
+    // No name yet — show edit state
+    view.style.display = 'none';
+    edit.style.display = 'flex';
+    if (counter) counter.textContent = `${remaining} edit${remaining === 1 ? '' : 's'} left`;
+  }
+}
+
+window.chatNameStartEdit = function() {
+  const remaining = MAX_NAME_EDITS - _chatNameEdits;
+  if (remaining <= 0) return;
+  const view = $('chatNameView');
+  const edit = $('chatNameEdit');
+  const cancelBtn = $('chatNameCancelBtn');
+  if (view) view.style.display = 'none';
+  if (edit) {
+    edit.style.display = 'flex';
+    const inp = $('chatNameInput');
+    if (inp) { inp.value = _chatName || ''; inp.focus(); inp.select(); }
+  }
+  // Show cancel only if name already exists (editing, not first set)
+  if (cancelBtn) cancelBtn.style.display = _chatName ? '' : 'none';
+};
+
+window.chatNameCancel = function() {
+  const view = $('chatNameView');
+  const edit = $('chatNameEdit');
+  const inp  = $('chatNameInput');
+  if (edit) edit.style.display = 'none';
+  if (inp)  inp.value = '';
+  if (view && _chatName) view.style.display = 'flex';
+};
+
+function chatSetName() {
+  const inp = $('chatNameInput');
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) return;
+
+  const isFirstSet = !_chatName;
+  if (!isFirstSet) {
+    // Counts as an edit only if name already existed
+    if (_chatNameEdits >= MAX_NAME_EDITS) return;
+    _chatNameEdits++;
+    localStorage.setItem('bloomChatNameEdits', String(_chatNameEdits));
+  }
+
+  localStorage.setItem('bloomChatName', name);
+  _chatName = name;
+  if (_chatWs && _chatConnected) {
+    _chatWs.send(JSON.stringify({ type: 'chat_setname', name }));
+  }
+  inp.value = '';
+  const st = $('chatNameStatus');
+  if (st) { st.style.display = 'block'; setTimeout(() => st.style.display = 'none', 2500); }
+  _chatNameRenderState();
+  _refreshMyMessages();
+  saveProfile();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOOMBARK TRADE — custom EVM swap via KyberSwap Aggregator
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fallback (mainnet) values — overwritten in-place by _loadNetworkConfig() once
+// the backend's active NETWORK_ENV (testnet/mainnet) config is fetched.
+const TRADE_CHAINS = {
+  ethereum: { id: 1,     hex: '0x1',     native: 'ETH',   explorer: 'https://etherscan.io/tx/' },
+  base:     { id: 8453,  hex: '0x2105',  native: 'ETH',   explorer: 'https://basescan.org/tx/' },
+  arbitrum: { id: 42161, hex: '0xa4b1',  native: 'ETH',   explorer: 'https://arbiscan.io/tx/' },
+  polygon:  { id: 137,   hex: '0x89',    native: 'MATIC', explorer: 'https://polygonscan.com/tx/' },
+  optimism: { id: 10,    hex: '0xa',     native: 'ETH',   explorer: 'https://optimistic.etherscan.io/tx/' },
+  robinhood:{ id: 4663,  hex: '0x1237',  native: 'ETH',   explorer: 'https://robinhoodchain.blockscout.com/tx/',
+              rpc: 'https://rpc.mainnet.chain.robinhood.com', name: 'Robinhood Chain' },
+};
+const NATIVE_ADDR = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+// DexScreener chainId → our chain key (mainnet slugs only — DexScreener/Kyber/
+// GeckoTerminal don't index testnet liquidity, so price/trade data is unaffected
+// by NETWORK_ENV; only wallet network-switching (TRADE_CHAINS below) is)
+const DEXSCREENER_CHAIN_MAP = { ethereum:'ethereum', base:'base', arbitrum:'arbitrum', polygon:'polygon', optimism:'optimism', robinhood:'robinhood' };
+
+let NETWORK_ENV  = 'mainnet';
+let IS_TESTNET   = false;
+const NATIVE_SYMBOL_BY_CHAIN = { ethereum:'ETH', base:'ETH', arbitrum:'ETH', polygon:'MATIC', optimism:'ETH', robinhood:'ETH' };
+
+// Pulls the backend's active network config (testnet/mainnet) and patches
+// TRADE_CHAINS in place so MetaMask network-switching targets the right chain.
+async function _loadNetworkConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/config/public`);
+    const cfg = await res.json();
+    NETWORK_ENV = cfg.networkEnv || 'mainnet';
+    IS_TESTNET  = !!cfg.isTestnet;
+    for (const [key, c] of Object.entries(cfg.chains || {})) {
+      if (!TRADE_CHAINS[key] || !c) continue;
+      TRADE_CHAINS[key] = {
+        id: c.chainId, hex: c.hex, native: NATIVE_SYMBOL_BY_CHAIN[key] || 'ETH',
+        explorer: c.explorer + '/tx/', rpc: c.rpc, name: c.name || key,
+      };
+    }
+    _updateTestnetBadge();
+  } catch (_) { /* keep mainnet fallback defaults */ }
+}
+_loadNetworkConfig();
+
+function _updateTestnetBadge() {
+  const badge = $('testnetBadge');
+  if (badge) badge.style.display = IS_TESTNET ? '' : 'none';
+}
+
+let _tradeToken    = null;  // { address, symbol, name, chain, price, decimals }
+let _tradeSide     = 'buy';
+let _tradeSlippage = 1;
+let _tradeQuote    = null;  // last routeSummary
+let _tradeTimer    = null;
+let _tradeBalance  = null;  // balance of the "pay" asset (float)
+
+function initTradePage() {
+  _tradeWalletStatus();
+  tradeLoadHoldings();
+}
+
+// ── RPC helpers (via backend proxy to public nodes) ──────────────────────────
+async function _rpc(chain, method, params) {
+  const r = await fetch(`${API_BASE}/trade/rpc/${chain}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message || 'RPC error');
+  return j.result;
+}
+
+async function _erc20Decimals(chain, token) {
+  const hex = await _rpc(chain, 'eth_call', [{ to: token, data: '0x313ce567' }, 'latest']);
+  return parseInt(hex, 16);
+}
+async function _erc20Balance(chain, token, owner) {
+  const data = '0x70a08231' + owner.toLowerCase().replace('0x','').padStart(64, '0');
+  const hex = await _rpc(chain, 'eth_call', [{ to: token, data }, 'latest']);
+  return BigInt(hex === '0x' ? '0' : hex);
+}
+async function _nativeBalance(chain, owner) {
+  const hex = await _rpc(chain, 'eth_getBalance', [owner, 'latest']);
+  return BigInt(hex);
+}
+async function _erc20Allowance(chain, token, owner, spender) {
+  const data = '0xdd62ed3e'
+    + owner.toLowerCase().replace('0x','').padStart(64, '0')
+    + spender.toLowerCase().replace('0x','').padStart(64, '0');
+  const hex = await _rpc(chain, 'eth_call', [{ to: token, data }, 'latest']);
+  return BigInt(hex === '0x' ? '0' : hex);
+}
+
+// Decimal string → BigInt raw units (no float precision loss)
+function _toRaw(amountStr, decimals) {
+  const [whole, frac = ''] = String(amountStr).split('.');
+  const fracPadded = (frac + '0'.repeat(decimals)).slice(0, decimals);
+  return BigInt(whole || '0') * (10n ** BigInt(decimals)) + BigInt(fracPadded || '0');
+}
+function _fromRaw(raw, decimals) {
+  return Number(raw) / Math.pow(10, decimals);
+}
+function _fmtAmt(n) {
+  if (!isFinite(n)) return '—';
+  if (n === 0) return '0';
+  if (n < 0.0001) return n.toExponential(3);
+  if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 6 });
+}
+
+// ── Load token ───────────────────────────────────────────────────────────────
+const TRADE_LOADING_STEPS = [
+  'Resolving token pair…',
+  'Fetching on-chain decimals…',
+  'Loading price & liquidity…',
+  'Preparing swap panel…',
+];
+
+async function tradeLoadToken() {
+  const addr = $('tradeTokenInput')?.value?.trim();
+  if (!addr) return showToast('Paste a token address first');
+  if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return showToast('Invalid EVM address — must start with 0x');
+
+  runLoadingSteps(async () => {
+    try {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`);
+      const j = await r.json();
+      const pairs = (j.pairs || [])
+        .filter(p => DEXSCREENER_CHAIN_MAP[p.chainId])
+        .sort((a,b) => (b.liquidity?.usd||0) - (a.liquidity?.usd||0));
+      if (!pairs.length) throw new Error('Token not found on a supported EVM chain (Ethereum, Base, Arbitrum, Polygon, Optimism, Robinhood)');
+      const p = pairs[0];
+      const chain = DEXSCREENER_CHAIN_MAP[p.chainId];
+
+      const decimals = await _erc20Decimals(chain, p.baseToken.address);
+
+      _tradeToken = {
+        address:  p.baseToken.address,
+        symbol:   p.baseToken.symbol,
+        name:     p.baseToken.name,
+        chain,
+        price:    parseFloat(p.priceUsd || 0),
+        decimals,
+      };
+      _tradePairAddr  = p.pairAddress || null;
+      _tradeCreatedAt = p.pairCreatedAt || null;
+
+      // Token bar
+      $('tradeTokenBar').style.display = 'flex';
+      $('tradeTokenSymbol').textContent = _tradeToken.symbol;
+      $('tradeTokenName').textContent   = _tradeToken.name;
+      $('tradeChainBadge').textContent  = chain.toUpperCase();
+      $('tradeTokenAddr').textContent   = addr.slice(0,10) + '…' + addr.slice(-8);
+      $('tradeTokenPrice').textContent  = '$' + (_tradeToken.price < 0.0001 ? _tradeToken.price.toExponential(3) : _tradeToken.price.toFixed(6));
+      const chg = parseFloat(p.priceChange?.h24 ?? 0);
+      const chgEl = $('tradeTokenChange');
+      chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '% (24h)';
+      chgEl.style.color = chg >= 0 ? '#27c97f' : '#ff4d4d';
+      const logo = $('tradeTokenLogo');
+      if (p.info?.imageUrl) { logo.src = p.info.imageUrl; logo.style.display = ''; } else logo.style.display = 'none';
+
+      $('tradeEmptyState').style.display = 'none';
+      $('swapPanel').style.display = '';
+      swapSetSide('buy');
+      _tradeWalletStatus();
+
+      // Chart + transactions (live) — chart is built from the transaction history
+      $('tradeChartCard').style.display = '';
+      $('tradeTxCard').style.display = '';
+      $('tradeChart').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:11px">Loading chart from transactions…</div>';
+      _tradeTrades = [];
+      tradeLoadTxs(true);
+      tradeStartLive();
+
+      $('loadingOverlay').style.display = 'none';
+      showToast(`${_tradeToken.symbol} ready to trade on ${chain}`);
+    } catch (e) {
+      $('loadingOverlay').style.display = 'none';
+      showToast('Failed: ' + (e.message || 'unknown error'));
+    }
+  }, TRADE_LOADING_STEPS);
+}
+
+// ── UI state ─────────────────────────────────────────────────────────────────
+function swapSetSide(side) {
+  _tradeSide = side;
+  const t = _tradeToken;
+  if (!t) return;
+  const native = TRADE_CHAINS[t.chain].native;
+
+  $('swapTabBuy').style.cssText  = 'flex:1;padding:8px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;letter-spacing:0.5px;transition:background .15s;border:none;' +
+    (side==='buy'  ? 'background:#27c97f;color:#000' : 'background:transparent;color:var(--text-muted)');
+  $('swapTabSell').style.cssText = 'flex:1;padding:8px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;letter-spacing:0.5px;transition:background .15s;border:none;' +
+    (side==='sell' ? 'background:#ff4d4d;color:#fff' : 'background:transparent;color:var(--text-muted)');
+
+  $('swapFromLabel').textContent = side === 'buy' ? native : t.symbol;
+  $('swapToLabel').textContent   = side === 'buy' ? t.symbol : native;
+  $('swapExecBtn').textContent   = (side === 'buy' ? 'BUY ' : 'SELL ') + t.symbol;
+  $('swapExecBtn').style.background = side === 'buy' ? '#27c97f' : '#ff4d4d';
+  $('swapExecBtn').style.color      = side === 'buy' ? '#000' : '#fff';
+  $('swapAmountIn').value = '';
+  _clearQuote();
+  _loadPayBalance();
+}
+
+function swapSetSlippage(v) {
+  _tradeSlippage = v;
+  const ids = { 0.5:'slipBtn05', 1:'slipBtn1', 3:'slipBtn3', 5:'slipBtn5' };
+  for (const [val, id] of Object.entries(ids)) {
+    const b = $(id); if (!b) continue;
+    const on = parseFloat(val) === v;
+    b.style.background  = on ? '#27c97f20' : 'var(--bg-secondary)';
+    b.style.borderColor = on ? '#27c97f60' : 'var(--border-light)';
+    b.style.color       = on ? '#27c97f' : 'var(--text-muted)';
+  }
+  if ($('swapAmountIn')?.value) swapScheduleQuote();
+}
+
+function _tradeWalletStatus() {
+  const st = $('swapWalletStatus');
+  if (!st) return;
+  const w = window._privyWallet;
+  st.textContent = w ? '🟢 ' + w.slice(0,6) + '…' + w.slice(-4) : 'Wallet not connected — connect via top-right button';
+}
+
+async function _loadPayBalance() {
+  _tradeBalance = null;
+  const lbl = $('swapBalanceLabel');
+  if (lbl) lbl.textContent = '';
+  const w = window._privyWallet, t = _tradeToken;
+  if (!w || !t) return;
+  try {
+    if (_tradeSide === 'buy') {
+      const raw = await _nativeBalance(t.chain, w);
+      _tradeBalance = _fromRaw(raw, 18);
+      if (lbl) lbl.textContent = 'Balance: ' + _fmtAmt(_tradeBalance) + ' ' + TRADE_CHAINS[t.chain].native;
+    } else {
+      const raw = await _erc20Balance(t.chain, t.address, w);
+      _tradeBalance = _fromRaw(raw, t.decimals);
+      if (lbl) lbl.textContent = 'Balance: ' + _fmtAmt(_tradeBalance) + ' ' + t.symbol;
+    }
+  } catch (_) {}
+}
+
+function swapPresetPct(pct) {
+  if (_tradeBalance == null) { showToast('Connect wallet to use balance presets'); return; }
+  let amt = _tradeBalance * pct / 100;
+  // Leave dust for gas when maxing native
+  if (_tradeSide === 'buy' && pct === 100) amt = Math.max(0, amt - 0.005);
+  $('swapAmountIn').value = amt > 0 ? amt.toFixed(6) : '';
+  swapScheduleQuote();
+}
+
+// ── Quote (KyberSwap route) ──────────────────────────────────────────────────
+function swapScheduleQuote() {
+  clearTimeout(_tradeTimer);
+  const st = $('swapQuoteStatus');
+  if (st) st.textContent = 'Fetching quote…';
+  _tradeTimer = setTimeout(_fetchQuote, 500);
+}
+
+function _clearQuote() {
+  _tradeQuote = null;
+  clearTimeout(_tradeTimer);
+  ['swapImpact','swapMinOut','swapRate','swapGas','swapRoute'].forEach(id => { const el=$(id); if (el) el.textContent='—'; });
+  const out = $('swapAmountOut'); if (out) { out.textContent = '—'; out.style.color = 'var(--text-muted)'; }
+  const st = $('swapQuoteStatus'); if (st) st.textContent = 'Enter amount to get quote';
+}
+
+async function _fetchQuote() {
+  const t = _tradeToken;
+  const amtStr = $('swapAmountIn')?.value?.trim();
+  const amt = parseFloat(amtStr);
+  if (!t || !amt || amt <= 0) { _clearQuote(); return; }
+
+  const isBuy = _tradeSide === 'buy';
+  const tokenIn  = isBuy ? NATIVE_ADDR : t.address;
+  const tokenOut = isBuy ? t.address : NATIVE_ADDR;
+  const inDecimals  = isBuy ? 18 : t.decimals;
+  const outDecimals = isBuy ? t.decimals : 18;
+  const amountIn = _toRaw(amtStr, inDecimals).toString();
+
+  try {
+    const r = await fetch(`${API_BASE}/trade/kyber/route?chain=${t.chain}&tokenIn=${tokenIn}&tokenOut=${tokenOut}&amountIn=${amountIn}`);
+    const j = await r.json();
+    if (!r.ok || !j.data?.routeSummary) throw new Error(j.error || j.message || 'No route found');
+    const rs = j.data.routeSummary;
+    _tradeQuote = { routeSummary: rs, routerAddress: j.data.routerAddress, tokenIn, outDecimals, inAmountRaw: amountIn };
+
+    const outAmt = _fromRaw(BigInt(rs.amountOut), outDecimals);
+    const minOut = outAmt * (1 - _tradeSlippage / 100);
+    const inUsd  = parseFloat(rs.amountInUsd || 0);
+    const outUsd = parseFloat(rs.amountOutUsd || 0);
+    const impact = inUsd > 0 ? Math.max(0, (1 - outUsd / inUsd) * 100) : 0;
+    const gasUsd = parseFloat(rs.gasUsd || 0);
+    const outSym = isBuy ? t.symbol : TRADE_CHAINS[t.chain].native;
+    const inSym  = isBuy ? TRADE_CHAINS[t.chain].native : t.symbol;
+    // Route DEX names
+    const dexes = [...new Set((rs.route || []).flat().map(h => h.exchange).filter(Boolean))].slice(0,3).join(', ');
+
+    const out = $('swapAmountOut');
+    out.textContent = _fmtAmt(outAmt) + ' ' + outSym;
+    out.style.color = 'var(--text-primary)';
+    $('swapMinOut').textContent = _fmtAmt(minOut) + ' ' + outSym;
+    $('swapImpact').textContent = impact.toFixed(2) + '%';
+    $('swapImpact').style.color = impact > 5 ? '#ff4d4d' : impact > 2 ? '#f59e0b' : '#27c97f';
+    $('swapRate').textContent   = '1 ' + inSym + ' = ' + _fmtAmt(outAmt / amt) + ' ' + outSym;
+    $('swapGas').textContent    = gasUsd ? '$' + gasUsd.toFixed(2) : '—';
+    $('swapRoute').textContent  = dexes || 'KyberSwap';
+    $('swapRoute').title        = dexes;
+    $('swapQuoteStatus').textContent = '✓ Live quote — auto-refresh 10s';
+
+    clearTimeout(_tradeTimer);
+    _tradeTimer = setTimeout(_fetchQuote, 10000);
+  } catch (e) {
+    _clearQuote();
+    const st = $('swapQuoteStatus');
+    if (st) st.textContent = '⚠ ' + (e.message || 'Quote failed');
+  }
+}
+
+// ── Execute ──────────────────────────────────────────────────────────────────
+async function _ensureChain(chain) {
+  const target = TRADE_CHAINS[chain];
+  const current = await window.ethereum.request({ method: 'eth_chainId' });
+  if (current === target.hex) return;
+  try {
+    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: target.hex }] });
+  } catch (e) {
+    // 4902 = chain not added to MetaMask yet — add it automatically if we know its RPC
+    if (e.code === 4902 && target.rpc) {
+      await window.ethereum.request({
+        method: 'wallet_addEthereumChain',
+        params: [{
+          chainId: target.hex,
+          chainName: target.name || chain,
+          nativeCurrency: { name: target.native, symbol: target.native, decimals: 18 },
+          rpcUrls: [target.rpc],
+          blockExplorerUrls: [target.explorer.replace(/\/tx\/$/, '')],
+        }],
+      });
+      return;
+    }
+    if (e.code === 4902) throw new Error(`Please add the ${chain} network to MetaMask first`);
+    throw new Error('Network switch rejected');
+  }
+}
+
+async function swapExecute() {
+  const t = _tradeToken, q = _tradeQuote, w = window._privyWallet;
+  if (!t || !q) return showToast('Get a quote first');
+  if (!w) return showToast('Connect wallet first (top-right button)');
+  if (!window.ethereum) return showToast('MetaMask not found');
+
+  const btn = $('swapExecBtn');
+  const txSt = $('swapTxStatus');
+  const resetBtn = () => { btn.disabled = false; swapSetSide(_tradeSide); };
+  btn.disabled = true;
+  if (txSt) { txSt.style.display = 'none'; }
+
+  try {
+    btn.textContent = 'Switching network…';
+    await _ensureChain(t.chain);
+
+    // Build the swap transaction
+    btn.textContent = 'Building route…';
+    const buildRes = await fetch(`${API_BASE}/trade/kyber/build`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chain: t.chain,
+        routeSummary: q.routeSummary,
+        sender: w,
+        slippageBps: Math.round(_tradeSlippage * 100),
+      }),
+    });
+    const build = await buildRes.json();
+    if (!buildRes.ok || !build.data?.data) throw new Error(build.error || 'Failed to build transaction');
+    const router = build.data.routerAddress;
+
+    // Approve ERC20 when selling
+    if (_tradeSide === 'sell') {
+      const allowance = await _erc20Allowance(t.chain, t.address, w, router);
+      const needed = BigInt(q.inAmountRaw);
+      if (allowance < needed) {
+        btn.textContent = 'Approve in MetaMask…';
+        const maxUint = 'f'.repeat(64);
+        const approveData = '0x095ea7b3' + router.toLowerCase().replace('0x','').padStart(64,'0') + maxUint;
+        const approveTx = await window.ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [{ from: w, to: t.address, data: approveData }],
+        });
+        btn.textContent = 'Waiting for approval…';
+        await _waitForTx(t.chain, approveTx);
+      }
+    }
+
+    // Send the swap
+    btn.textContent = 'Confirm in MetaMask…';
+    const txParams = { from: w, to: router, data: build.data.data };
+    if (_tradeSide === 'buy') txParams.value = '0x' + BigInt(q.inAmountRaw).toString(16);
+    if (build.data.gas) txParams.gas = '0x' + Math.ceil(parseInt(build.data.gas) * 1.25).toString(16);
+    const txHash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [txParams] });
+
+    btn.textContent = 'Confirming…';
+    const ok = await _waitForTx(t.chain, txHash);
+
+    const link = TRADE_CHAINS[t.chain].explorer + txHash;
+    if (txSt) {
+      txSt.innerHTML = ok
+        ? `✅ Swap confirmed! <a href="${link}" target="_blank" rel="noopener" style="color:#27c97f">View on explorer ↗</a>`
+        : `⚠ Tx reverted. <a href="${link}" target="_blank" rel="noopener" style="color:#f59e0b">View on explorer ↗</a>`;
+      txSt.style.color = ok ? '#27c97f' : '#f59e0b';
+      txSt.style.display = 'block';
+    }
+    showToast(ok ? 'Swap executed! 🎉' : 'Transaction reverted');
+    $('swapAmountIn').value = '';
+    _clearQuote();
+    _loadPayBalance();
+    resetBtn();
+  } catch (e) {
+    const msg = e.code === 4001 ? 'Rejected in MetaMask' : (e.message || 'Swap failed');
+    showToast(msg);
+    if (txSt) { txSt.textContent = '⚠ ' + msg; txSt.style.color = '#ff4d4d'; txSt.style.display = 'block'; }
+    resetBtn();
+  }
+}
+
+async function _waitForTx(chain, hash) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      const receipt = await _rpc(chain, 'eth_getTransactionReceipt', [hash]);
+      if (receipt) return receipt.status === '0x1';
+    } catch (_) {}
+  }
+  throw new Error('Transaction confirmation timeout — check explorer');
+}
+
+// ── Wallet holdings on Trade page ────────────────────────────────────────────
+let _holdingsLoaded = false;
+
+async function tradeLoadHoldings(force = false) {
+  const w = window._privyWallet;
+  const card  = $('tradeHoldingsCard');
+  const empty = $('tradeHoldingsEmpty');
+  const list  = $('tradeHoldingsList');
+  if (!card || !list) return;
+  if (!w) { card.style.display = 'none'; if (empty) empty.style.display = ''; _holdingsLoaded = false; return; }
+  if (_holdingsLoaded && !force) return;
+
+  card.style.display = '';
+  if (empty) empty.style.display = 'none';
+  list.innerHTML = '<div style="padding:24px 16px;text-align:center;font-size:11px;color:var(--text-muted)">Loading holdings…</div>';
+  try {
+    const r = await fetch(`${API_BASE}/trade/holdings/${w}`);
+    const j = await r.json();
+    const hs = j.holdings || [];
+    _holdingsLoaded = true;
+
+    if (!hs.length) {
+      list.innerHTML = '<div style="padding:24px 16px;text-align:center;font-size:11px;color:var(--text-muted)">No tokens found in this wallet</div>';
+      $('tradeHoldingsTotal').textContent = '$0.00';
+      return;
+    }
+
+    const total = hs.reduce((s, h) => s + (h.usd || 0), 0);
+    $('tradeHoldingsTotal').textContent = '$' + total.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+    list.innerHTML = hs.map(h => {
+      const iconHtml = h.icon
+        ? `<img src="${h.icon}" style="width:30px;height:30px;border-radius:50%;flex-shrink:0" onerror="this.outerHTML='<div style=\\'width:30px;height:30px;border-radius:50%;background:#27c97f1f;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#27c97f;flex-shrink:0\\'>${(h.symbol||'?')[0]}</div>'">`
+        : `<div style="width:30px;height:30px;border-radius:50%;background:#27c97f1f;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#27c97f;flex-shrink:0">${(h.symbol||'?')[0]}</div>`;
+      const clickable = !h.native;
+      return `<div ${clickable ? `onclick="tradeSelectHolding('${h.address}')" ` : ''}style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border-light);${clickable ? 'cursor:pointer' : ''}"
+        ${clickable ? `onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''" title="Click to trade ${h.symbol}"` : ''}>
+        ${iconHtml}
+        <div style="min-width:0">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:12px;font-weight:700;color:var(--text-primary)">${h.symbol}</span>
+            <span style="font-size:8px;padding:1px 6px;border-radius:10px;font-weight:700;background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-light);white-space:nowrap">${h.chain.toUpperCase()}</span>
+          </div>
+          <div style="font-size:9px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px">${h.name || ''}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right;flex-shrink:0">
+          <div style="font-size:11px;font-weight:700;color:var(--text-primary);font-family:monospace">${_fmtAmt(h.balance)}</div>
+          <div style="font-size:9px;color:${h.usd != null ? '#27c97f' : 'var(--text-muted)'}">${h.usd != null ? '$' + h.usd.toLocaleString('en-US',{maximumFractionDigits:2}) : '—'}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;color:var(--text-muted)">Failed to load holdings</div>';
+  }
+}
+
+// Click a holding → load it into the trade panel (SELL side, since they own it)
+function tradeSelectHolding(address) {
+  const inp = $('tradeTokenInput');
+  if (inp) inp.value = address;
+  tradeLoadToken().then(() => { if (_tradeToken) swapSetSide('sell'); });
+}
+
+// ── Trade page: live chart + recent transactions ─────────────────────────────
+const TRADE_GECKO_NET = { ethereum:'eth', base:'base', arbitrum:'arbitrum', polygon:'polygon_pos', optimism:'optimism', robinhood:'robinhood' };
+
+let _tradeChart      = null;
+let _tradeSeries     = null;
+let _tradeInterval   = '1m';
+let _tradeChartTimer = null;
+let _tradeTxTimer    = null;
+let _tradePairAddr   = null;
+let _tradeCreatedAt  = null;
+
+function _tradePageActive() {
+  return document.getElementById('page-trade')?.classList.contains('active');
+}
+
+function _tradeStopLive() {
+  clearInterval(_tradeChartTimer); _tradeChartTimer = null;
+  clearInterval(_tradeTxTimer);    _tradeTxTimer = null;
+}
+
+function tradeStartLive() {
+  _tradeStopLive();
+  // Single 12s cycle: transactions feed both the tx list AND the chart candles
+  _tradeTxTimer = setInterval(() => { if (_tradePageActive() && _tradePairAddr) tradeLoadTxs(false); }, 12000);
+}
+
+function _tradeBuildChart(samplePrice) {
+  const container = $('tradeChart');
+  if (!container || !window.LightweightCharts) return;
+  container.innerHTML = '';
+  if (_tradeChart) { try { _tradeChart.remove(); } catch(_){} _tradeChart = null; }
+
+  const chart = LightweightCharts.createChart(container, {
+    width:  container.clientWidth || 500,
+    height: 260,
+    layout: { background:{ color:'transparent' }, textColor:'#8b92a8', fontSize: 10 },
+    grid:   { vertLines:{ visible:false }, horzLines:{ color:'#1e223055' } },
+    crosshair: { mode: 1 },
+    rightPriceScale: { borderColor:'#1e2230' },
+    timeScale: { borderColor:'#1e2230', timeVisible:true, secondsVisible:true },
+  });
+
+  let minMove = 0.01;
+  if (samplePrice < 0.000001)    minMove = 0.0000000001;
+  else if (samplePrice < 0.0001) minMove = 0.00000001;
+  else if (samplePrice < 0.01)   minMove = 0.000001;
+  else if (samplePrice < 1)      minMove = 0.0001;
+
+  _tradeSeries = chart.addCandlestickSeries({
+    upColor:'#27C97F', downColor:'#F0484B',
+    borderUpColor:'#27C97F', borderDownColor:'#F0484B',
+    wickUpColor:'#27C97F', wickDownColor:'#F0484B',
+    priceFormat: { type:'custom', formatter: p => (typeof fmt !== 'undefined' && fmt.price) ? fmt.price(p) : p.toPrecision(4), minMove },
+  });
+  _tradeChart = chart;
+}
+
+// Cached transaction history — the single source of truth for the chart
+let _tradeTrades = [];
+
+// Bucket transaction prices into OHLC candles for the selected interval
+function _buildCandlesFromTrades(trades) {
+  const secs = TRADE_INTERVAL_SECS[_tradeInterval] || 60;
+  const valid = trades
+    .filter(tr => tr.priceUsd > 0 && tr.timestamp > 0)
+    .sort((a, b) => a.timestamp - b.timestamp); // oldest → newest
+  const buckets = new Map();
+  for (const tr of valid) {
+    const bucket = Math.floor(tr.timestamp / 1000 / secs) * secs;
+    const p = tr.priceUsd;
+    if (!buckets.has(bucket)) {
+      buckets.set(bucket, { time: bucket, open: p, high: p, low: p, close: p });
+    } else {
+      const c = buckets.get(bucket);
+      c.high  = Math.max(c.high, p);
+      c.low   = Math.min(c.low,  p);
+      c.close = p;
+    }
+  }
+  return [...buckets.values()].sort((a, b) => a.time - b.time);
+}
+
+// Render chart entirely from transaction-history prices
+function _tradeRenderChartFromTrades(rebuild = true) {
+  const t = _tradeToken;
+  if (!t) return;
+  const candles = _buildCandlesFromTrades(_tradeTrades);
+  if (!candles.length) {
+    if (rebuild) $('tradeChart').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:11px">No transaction data to chart yet</div>';
+    return;
+  }
+  if (rebuild || !_tradeSeries) _tradeBuildChart(candles[candles.length - 1].close);
+  if (!_tradeSeries) return;
+  _tradeSeries.setData(candles);
+  if (rebuild) _tradeChart.timeScale().fitContent();
+  // Track the last candle so live trade prices can extend it in realtime
+  _tradeLastCandle = { ...candles[candles.length - 1] };
+}
+
+// ── Live price from latest transaction ───────────────────────────────────────
+let _tradeLastCandle = null;
+const TRADE_INTERVAL_SECS = { '1s': 1, '30s': 30, '1m': 60, '5m': 300 };
+
+function _applyTradePrice(p) {
+  const t = _tradeToken;
+  if (!t || !p || p <= 0) return;
+
+  // 1. Token bar: show latest execution price, tinted by direction vs previous
+  const el = $('tradeTokenPrice');
+  if (el) {
+    const prev = t.price || 0;
+    el.textContent = '$' + (p < 0.0001 ? p.toExponential(3) : p.toFixed(6));
+    if (prev > 0 && p !== prev) {
+      el.style.color = p > prev ? '#27c97f' : '#ff4d4d';
+      el.style.transition = 'color 0.2s';
+    }
+  }
+  t.price = p;
+
+  // 2. Live candle: extend/replace the current in-progress candle on the chart
+  if (_tradeSeries && _tradeLastCandle) {
+    const secs   = TRADE_INTERVAL_SECS[_tradeInterval] || 60;
+    const bucket = Math.floor(Date.now() / 1000 / secs) * secs;
+    if (bucket <= _tradeLastCandle.time) {
+      // Same (or older) bucket — update the existing candle
+      _tradeLastCandle.close = p;
+      _tradeLastCandle.high  = Math.max(_tradeLastCandle.high, p);
+      _tradeLastCandle.low   = Math.min(_tradeLastCandle.low,  p);
+    } else {
+      // New interval started — open a fresh live candle from the previous close
+      const open = _tradeLastCandle.close;
+      _tradeLastCandle = { time: bucket, open, high: Math.max(open, p), low: Math.min(open, p), close: p };
+    }
+    try { _tradeSeries.update(_tradeLastCandle); } catch (_) {}
+  }
+}
+
+function tradeSetInterval(intv) {
+  _tradeInterval = intv;
+  document.querySelectorAll('.trade-chart-int').forEach(b => {
+    const on = b.dataset.int === intv;
+    b.style.background   = on ? '#27c97f20' : 'var(--bg-secondary)';
+    b.style.borderColor  = on ? '#27c97f60' : 'var(--border-light)';
+    b.style.color        = on ? '#27c97f' : 'var(--text-muted)';
+    b.style.fontWeight   = on ? '700' : '600';
+  });
+  // Rebuild candles from the cached transaction history with the new bucket size
+  _tradeRenderChartFromTrades(true);
+}
+
+async function tradeLoadTxs(showLoading = true) {
+  const t = _tradeToken;
+  const list = $('tradeTxList');
+  if (!t || !_tradePairAddr || !list) return;
+  if (showLoading) list.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;color:var(--text-muted)">Loading transactions…</div>';
+  try {
+    const net = TRADE_GECKO_NET[t.chain] || t.chain;
+    // Fetch up to 300 trades: top 30 shown in the list, all of them feed the chart
+    const r = await fetch(`${API_BASE}/recent-trades`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ poolAddress: _tradePairAddr, network: net, limit: 300 }),
+    });
+    const j = await r.json();
+    const allTrades = j.trades || [];
+    if (!allTrades.length) {
+      list.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;color:var(--text-muted)">No recent trades data for this pool</div>';
+      return;
+    }
+
+    // Chart = transaction history (rebuild only on first load / new data)
+    const firstBuild = _tradeTrades.length === 0;
+    _tradeTrades = allTrades;
+    _tradeRenderChartFromTrades(firstBuild);
+
+    const trades = allTrades.slice(0, 30);
+    const explorer = TRADE_CHAINS[t.chain]?.explorer || '';
+    const fmtTxPrice = p => !p ? '—'
+      : p < 0.0001 ? '$' + p.toExponential(2)
+      : p < 1      ? '$' + p.toFixed(6)
+      : p < 1000   ? '$' + p.toFixed(4)
+      : '$' + p.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    list.innerHTML = trades.map(tr => `
+      <div style="display:grid;grid-template-columns:56px 1fr 1fr 1fr 62px 34px;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border-light);font-size:11px;align-items:center">
+        <span style="font-weight:800;color:${tr.isBuy ? '#27c97f' : '#ff4d4d'}">${tr.isBuy ? '▲ BUY' : '▼ SELL'}</span>
+        <span style="text-align:right;font-family:monospace;font-weight:700;color:${tr.isBuy ? '#27c97f' : '#ff4d4d'};font-size:10px" title="Execution price">${fmtTxPrice(tr.priceUsd)}</span>
+        <span style="text-align:right;font-family:monospace;font-weight:700;color:var(--text-primary)">$${tr.volUsd >= 1000 ? (tr.volUsd/1000).toFixed(1)+'K' : tr.volUsd.toFixed(2)}</span>
+        <span style="font-family:monospace;color:var(--text-muted);font-size:10px">${tr.wallet}</span>
+        <span style="text-align:right;color:var(--text-muted);font-size:10px">${tr.time}</span>
+        <span style="text-align:right">${tr.txHash && explorer ? `<a href="${explorer}${tr.txHash}" target="_blank" rel="noopener" style="color:#27c97f;font-size:10px;text-decoration:none">↗</a>` : '—'}</span>
+      </div>`).join('');
+    const upd = $('tradeTxUpdated');
+    if (upd) upd.textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+    // Latest transaction drives the live price (token bar + current candle)
+    const newest = trades[0];
+    if (newest?.priceUsd > 0) _applyTradePrice(newest.priceUsd);
+  } catch (_) {
+    if (showLoading) list.innerHTML = '<div style="padding:20px;text-align:center;font-size:11px;color:var(--text-muted)">Failed to load transactions</div>';
+  }
+}
