@@ -1,10 +1,9 @@
 node_modules/
 
-# Secrets & local config (never commit) — .env.example IS committed as the template
-.env
-.env.*
+# backend/.env IS tracked (shared default config, no real secrets — see the file
+# header). Local machine-specific overrides can go in backend/.env.local instead.
+.env.local
+backend/.env.local
 !.env.example
-backend/.env
-backend/.env.*
 !backend/.env.example
 backend/.secrets.json

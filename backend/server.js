@@ -1,4 +1,7 @@
-require('dotenv').config();          // load backend/.env into process.env
+// Load committed defaults from backend/.env, then let an optional untracked
+// backend/.env.local override any of them for machine-specific config.
+require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env.local'), override: true });
 const express      = require('express');
 const cors         = require('cors');
 const http         = require('http');
