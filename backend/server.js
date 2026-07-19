@@ -1,3 +1,4 @@
+require('dotenv').config();          // load backend/.env into process.env
 const express      = require('express');
 const cors         = require('cors');
 const http         = require('http');
@@ -14,9 +15,13 @@ const app    = express();
 const server = http.createServer(app);
 const wss    = new WebSocket.Server({ server });
 
+const PORT = process.env.PORT || 3001;
+// Base URL for same-process self-calls (e.g. chat bot hitting our own /api/predict)
+const INTERNAL_API_BASE = process.env.INTERNAL_API_BASE || `http://127.0.0.1:${PORT}`;
+
 // ─── JWT + Encryption secrets (persisted to .secrets file so restarts don't invalidate sessions) ─────
 const fs = require('fs');
-const SECRETS_FILE = path.join(__dirname, '.secrets.json');
+const SECRETS_FILE = process.env.SECRETS_FILE_PATH || path.join(__dirname, '.secrets.json');
 let _secrets = {};
 try { _secrets = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf8')); } catch (_) {}
 if (!_secrets.JWT_SECRET) _secrets.JWT_SECRET = crypto.randomBytes(32).toString('hex');
@@ -26,7 +31,7 @@ const JWT_SECRET = process.env.JWT_SECRET || _secrets.JWT_SECRET;
 const ENC_KEY    = process.env.ENC_KEY    || _secrets.ENC_KEY;
 
 // ─── SQLite DB ─────────────────────────────────────────────────────────────────
-const db = new Database(path.join(__dirname, 'bloombark.db'));
+const db = new Database(process.env.DB_FILE_PATH || path.join(__dirname, 'bloombark.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +57,27 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
+`);
+
+// ── User profiles & chat history tables ──────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_profiles (
+    wallet       TEXT PRIMARY KEY,
+    display_name TEXT,
+    avatar       TEXT,
+    updated_at   INTEGER DEFAULT (strftime('%s','now'))
+  );
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id           TEXT PRIMARY KEY,
+    room         TEXT NOT NULL,
+    wallet       TEXT,
+    display_name TEXT,
+    avatar       TEXT,
+    text         TEXT,
+    img_data     TEXT,
+    ts           INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_room_ts ON chat_messages(room, ts);
 `);
 
 // Seed default config if not set
@@ -84,126 +110,181 @@ function hashJwt(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-app.use(cors({ origin: true, credentials: true }));
+// CORS_ORIGIN: comma-separated allowlist, or unset/"*" to reflect any origin (dev default)
+const _corsEnv = (process.env.CORS_ORIGIN || '').trim();
+const _corsOrigin = (!_corsEnv || _corsEnv === '*')
+  ? true
+  : _corsEnv.split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({ origin: _corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// ─── Constants ─────────────────────────────────────────────────────────────────
-const DEXSCREENER  = 'https://api.dexscreener.com';
-const DS_CHART     = 'https://io.dexscreener.com';
-const GECKO        = 'https://api.geckoterminal.com/api/v2';
-const GECKO_HEADS  = { 'Accept': 'application/json;version=20230302' };
-const GOPLUS       = 'https://api.gopluslabs.io/api/v1';
+// ─── Network environment (testnet / mainnet) ─────────────────────────────────
+// Defaults to 'testnet' whenever no deployment platform env var is present
+// (i.e. running locally), 'mainnet' otherwise. Override explicitly with
+// NETWORK_ENV=mainnet|testnet regardless of where it's running.
+const _isLocalHost = !process.env.RENDER && !process.env.VERCEL && !process.env.FLY_APP_NAME
+  && !process.env.RAILWAY_ENVIRONMENT && !process.env.PRODUCTION_URL && process.env.NODE_ENV !== 'production';
+const NETWORK_ENV = (process.env.NETWORK_ENV || (_isLocalHost ? 'testnet' : 'mainnet')).toLowerCase();
+const IS_TESTNET  = NETWORK_ENV === 'testnet';
+console.log(`[network] Running in ${NETWORK_ENV.toUpperCase()} mode${_isLocalHost ? ' (auto-detected: localhost)' : ''}`);
 
-const GOPLUS_CHAIN = { ethereum:'1', bsc:'56', base:'8453', arbitrum:'42161', solana:'solana' };
+// Per-chain mainnet/testnet parameters. Pick with `chainCfg(key)` below.
+// Testnet counterparts: Ethereum→Sepolia, Base→Base Sepolia, Arbitrum→Arbitrum
+// Sepolia, Polygon→Amoy, Optimism→OP Sepolia, Robinhood→Robinhood Testnet.
+// Note: DexScreener / GeckoTerminal / KyberSwap generally do not index testnet
+// data, so price/analyze/trade-quote features will have no data in testnet
+// mode — only direct RPC reads (balance, decimals, tx) and MetaMask network
+// switching are meaningfully affected by this config.
+const CHAIN_NETWORKS = {
+  ethereum: {
+    mainnet: { chainId: 1,        hex: '0x1',      rpc: 'https://ethereum-rpc.publicnode.com',         explorer: 'https://etherscan.io',          blockscout: 'https://eth.blockscout.com' },
+    testnet: { chainId: 11155111, hex: '0xaa36a7',  rpc: 'https://ethereum-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.etherscan.io',  blockscout: 'https://eth-sepolia.blockscout.com', name: 'Sepolia' },
+  },
+  base: {
+    mainnet: { chainId: 8453,  hex: '0x2105', rpc: 'https://base-rpc.publicnode.com',         explorer: 'https://basescan.org',         blockscout: 'https://base.blockscout.com' },
+    testnet: { chainId: 84532, hex: '0x14a34', rpc: 'https://base-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.basescan.org', blockscout: 'https://base-sepolia.blockscout.com', name: 'Base Sepolia' },
+  },
+  arbitrum: {
+    mainnet: { chainId: 42161,  hex: '0xa4b1',  rpc: 'https://arbitrum-one-rpc.publicnode.com',     explorer: 'https://arbiscan.io',         blockscout: 'https://arbitrum.blockscout.com' },
+    testnet: { chainId: 421614, hex: '0x66eee', rpc: 'https://arbitrum-sepolia-rpc.publicnode.com', explorer: 'https://sepolia.arbiscan.io', blockscout: 'https://arbitrum.blockscout.com', name: 'Arbitrum Sepolia' },
+  },
+  polygon: {
+    mainnet: { chainId: 137,   hex: '0x89',    rpc: 'https://polygon-bor-rpc.publicnode.com',       explorer: 'https://polygonscan.com',     blockscout: 'https://polygon.blockscout.com' },
+    testnet: { chainId: 80002, hex: '0x13882', rpc: 'https://polygon-amoy-bor-rpc.publicnode.com',  explorer: 'https://amoy.polygonscan.com', blockscout: 'https://polygon.blockscout.com', name: 'Polygon Amoy' },
+  },
+  optimism: {
+    mainnet: { chainId: 10,       hex: '0xa',       rpc: 'https://optimism-rpc.publicnode.com',         explorer: 'https://optimistic.etherscan.io',        blockscout: 'https://explorer.optimism.io' },
+    testnet: { chainId: 11155420, hex: '0xaa37dc',  rpc: 'https://optimism-sepolia-rpc.publicnode.com', explorer: 'https://sepolia-optimism.etherscan.io',  blockscout: 'https://explorer.optimism.io', name: 'OP Sepolia' },
+  },
+  robinhood: {
+    mainnet: { chainId: 4663,  hex: '0x1237', rpc: 'https://robinhoodchain.blockscout.com/api/eth-rpc',      explorer: 'https://robinhoodchain.blockscout.com',      blockscout: 'https://robinhoodchain.blockscout.com' },
+    testnet: { chainId: 46630, hex: '0xb626', rpc: 'https://rpc.testnet.chain.robinhood.com/rpc',            explorer: 'https://explorer.testnet.chain.robinhood.com', blockscout: 'https://explorer.testnet.chain.robinhood.com', name: 'Robinhood Testnet' },
+  },
+};
+
+// Returns the active (testnet or mainnet, per NETWORK_ENV) config for a chain key
+function chainCfg(key) {
+  const c = CHAIN_NETWORKS[key];
+  if (!c) return null;
+  return c[NETWORK_ENV] || c.mainnet;
+}
+
+// ─── External API base URLs (env-overridable; sensible public defaults) ────────
+const DEXSCREENER  = process.env.DEXSCREENER_API || 'https://api.dexscreener.com';
+const DS_CHART     = process.env.DEXSCREENER_CHART_API || 'https://io.dexscreener.com';
+const GECKO        = process.env.GECKO_API || 'https://api.geckoterminal.com/api/v2';
+const GECKO_API_KEY = process.env.GECKO_API_KEY || '';
+const GECKO_HEADS  = { 'Accept': 'application/json;version=20230302', ...(GECKO_API_KEY ? { 'x-cg-pro-api-key': GECKO_API_KEY } : {}) };
+const GOPLUS       = process.env.GOPLUS_API || 'https://api.gopluslabs.io/api/v1';
+const GOPLUS_API_KEY = process.env.GOPLUS_API_KEY || '';
+const GOPLUS_HEADS = GOPLUS_API_KEY ? { 'Authorization': GOPLUS_API_KEY } : {};
+
+// ─── Tunable parameters (all env-overridable; defaults preserve current behavior) ──
+const CONFIG = {
+  // Caching / TTLs (ms unless noted)
+  goplusCacheTtlMs:      (parseInt(process.env.GOPLUS_CACHE_TTL_MIN)    || 10)  * 60 * 1000,
+  gateCacheTtlMs:         (parseInt(process.env.GATE_CACHE_TTL_SEC)      || 30)  * 1000,
+  walletMapCacheTtlMs:    (parseInt(process.env.WALLET_MAP_CACHE_TTL_MIN)|| 5)   * 60 * 1000,
+  holdingsCacheTtlMs:     (parseInt(process.env.HOLDINGS_CACHE_TTL_SEC)  || 60)  * 1000,
+  narrativeWarmDelayMs:   (parseInt(process.env.NARRATIVE_WARM_DELAY_SEC)|| 5)   * 1000,
+  narrativeFetchDelayMs:  (parseInt(process.env.NARRATIVE_FETCH_DELAY_MS)|| 5000),
+  narrativeRetryDelayMs:  (parseInt(process.env.NARRATIVE_RETRY_DELAY_MIN)||10)  * 60 * 1000,
+  narrativeWaitTimeoutMs: (parseInt(process.env.NARRATIVE_WAIT_TIMEOUT_SEC)||15) * 1000,
+  dashWarmDelayMs:        (parseInt(process.env.DASH_WARM_DELAY_SEC)     || 1)   * 1000,
+
+  // Chat
+  chatHistoryLimit:      parseInt(process.env.CHAT_HISTORY_LIMIT)    || 100,
+  chatDbPruneLimit:      parseInt(process.env.CHAT_DB_PRUNE_LIMIT)   || 500,
+  chatMsgMaxLen:         parseInt(process.env.CHAT_MSG_MAX_LEN)      || 500,
+  chatNameMaxLen:        parseInt(process.env.CHAT_NAME_MAX_LEN)     || 24,
+  chatBotCooldownMs:     (parseInt(process.env.CHAT_BOT_COOLDOWN_SEC) || 120) * 1000,
+
+  // Simulated live price ticker
+  priceTickIntervalMs:   parseInt(process.env.PRICE_TICK_INTERVAL_MS)    || 2000,
+  priceReseedIntervalMs: (parseInt(process.env.PRICE_RESEED_INTERVAL_SEC)|| 60) * 1000,
+  priceMeanRevertFactor: parseFloat(process.env.PRICE_MEANREVERT_FACTOR) || 0.08,
+  priceNoisePct:         parseFloat(process.env.PRICE_NOISE_PCT)        || 0.002,
+  priceClampPct:         parseFloat(process.env.PRICE_CLAMP_PCT)        || 0.02,
+
+  // Auth / sessions
+  jwtExpiresInSec:       (parseInt(process.env.JWT_EXPIRES_IN_DAYS) || 7) * 24 * 3600,
+
+  // Wallet holdings / tracker filters
+  holdingsDustUsd:       parseFloat(process.env.HOLDINGS_DUST_USD)      || 0.01,
+  holdingsMaxResults:    parseInt(process.env.HOLDINGS_MAX_RESULTS)     || 50,
+  walletMaxTokens:       parseInt(process.env.WALLET_MAX_TOKENS)        || 90,
+  minVolumeUsdFilter:    parseFloat(process.env.MIN_VOLUME_USD_FILTER)  || 50,
+};
+
+const GOPLUS_CHAIN = { ethereum:'1', base:'8453', arbitrum:'42161', robinhood:'4663' };
 
 const _gtGet = (url) => axios.get(url, { timeout: 10000, headers: GECKO_HEADS }).catch(() => null);
 
 // Map our chain key → GeckoTerminal network id
 const GECKO_NETWORK = {
-  solana:   'solana',
-  ethereum: 'eth',
-  bsc:      'bsc',
-  base:     'base',
-  arbitrum: 'arbitrum',
-  tron:     'tron',
+  ethereum:  'eth',
+  base:      'base',
+  arbitrum:  'arbitrum',
+  tron:      'tron',
+  robinhood: 'robinhood', // GeckoTerminal may not support yet — fallback to DexScreener
 };
 
 // Map our chain key → DexScreener chainId
 const DS_CHAIN = {
-  solana:   'solana',
-  ethereum: 'ethereum',
-  bsc:      'bsc',
-  base:     'base',
-  arbitrum: 'arbitrum',
-  tron:     'tron',
+  ethereum:  'ethereum',
+  base:      'base',
+  arbitrum:  'arbitrum',
+  tron:      'tron',
+  robinhood: 'robinhood',
 };
 
 // ─── GoPlus Security API ───────────────────────────────────────────────────────
 const _goplusCache = new Map();
-async function fetchGoPlus(contractAddress, chain = 'solana') {
+async function fetchGoPlus(contractAddress, chain = 'ethereum') {
   const cacheKey = `${chain}:${contractAddress}`;
   const cached = _goplusCache.get(cacheKey);
-  // Cache GoPlus for 10 min — security data doesn't change often
-  if (cached && Date.now() - cached.ts < 600000) return cached.val;
+  if (cached && Date.now() - cached.ts < CONFIG.goplusCacheTtlMs) return cached.val;
   try {
-    const isSolana = chain === 'solana';
-    const url = isSolana
-      ? `${GOPLUS}/solana/token_security?contract_addresses=${contractAddress}`
-      : `${GOPLUS}/token_security/${GOPLUS_CHAIN[chain] || '1'}?contract_addresses=${contractAddress}`;
-    const { data } = await axios.get(url, { timeout: 8000 });
+    const url = `${GOPLUS}/token_security/${GOPLUS_CHAIN[chain] || '1'}?contract_addresses=${contractAddress}`;
+    const { data } = await axios.get(url, { timeout: 8000, headers: GOPLUS_HEADS });
     const token = Object.values(data?.result || {})[0];
     if (!token) return cached?.val || null;
 
-    if (isSolana) {
-      const creators = token.creators || [];
-      // PumpFun bonding curve address — treat as program, not creator wallet
-      const PUMPFUN_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
-      const creatorRaw = creators[0]?.address || null;
-      const isPumpFun = creatorRaw === PUMPFUN_PROGRAM || token.is_pump_fun === 1;
-      // GoPlus Solana top holders field
-      const solHolders = (token.holders || token.top_holders || []).slice(0, 20).map(h => ({
-        address: h.address, pct: parseFloat(h.percent || 0) * 100,
-        isContract: h.is_contract === 1, locked: h.is_locked === 1, tag: h.tag || '',
-      }));
-      const result = {
-        isHoneypot:     false,
-        honeypotReason: null,
-        buyTax:         parseFloat(token.transfer_fee?.fee_rate || 0) * 100,
-        sellTax:        parseFloat(token.transfer_fee?.fee_rate || 0) * 100,
-        creatorAddress: isPumpFun ? null : creatorRaw,
-        creatorMalicious: creators[0]?.malicious_address === 1,
-        isPumpFun,
-        pumpFunCreator: isPumpFun ? creators[1]?.address || null : null,
-        isMintable:     token.mintable?.status === '1',
-        isFreezable:    token.freezable?.status === '1',
-        metadataMutable: token.metadata_mutable?.status === '1',
-        isTrusted:      token.trusted_token === 1,
-        holderCount:    parseInt(token.holder_count || 0),
-        lpHolders:      (token.lp_holders || []).slice(0, 5).map(h => ({
-          address: h.address, pct: parseFloat(h.percent || 0) * 100, locked: h.is_locked === 1, tag: h.tag || '',
-        })),
-        holders:        solHolders,
-        chain: 'solana',
-      };
-      _goplusCache.set(cacheKey, { val: result, ts: Date.now() });
-      return result;
-    } else {
-      const cexInfo = token.is_in_cex;
-      const evmResult = {
-        isHoneypot:       token.is_honeypot === '1',
-        honeypotReason:   token.honeypot_with_same_creator === '1' ? 'Same creator as known honeypot' : null,
-        buyTax:           parseFloat(token.buy_tax || 0) * 100,
-        sellTax:          parseFloat(token.sell_tax || 0) * 100,
-        transferTax:      parseFloat(token.transfer_tax || 0) * 100,
-        creatorAddress:   token.creator_address || null,
-        creatorPercent:   parseFloat(token.creator_percent || 0) * 100,
-        creatorMalicious: token.creator_address_malicious === '1',
-        isMintable:       token.is_mintable === '1',
-        isFreezable:      false,
-        isOpenSource:     token.is_open_source === '1',
-        isProxy:          token.is_proxy === '1',
-        cannotBuy:        token.cannot_buy === '1',
-        metadataMutable:  false,
-        isTrusted:        token.is_open_source === '1',
-        holderCount:      parseInt(token.holder_count || 0),
-        lpHolderCount:    parseInt(token.lp_holder_count || 0),
-        isInDex:          token.is_in_dex === '1',
-        isInCex:          cexInfo?.listed === '1',
-        cexList:          cexInfo?.cex_list || [],
-        lpHolders:        (token.lp_holders || []).slice(0, 5).map(h => ({
-          address: h.address, pct: parseFloat(h.percent || 0) * 100, locked: h.is_locked === 1, tag: h.tag || '',
-        })),
-        holders:          (token.holders || []).slice(0, 20).map(h => ({
-          address: h.address, pct: parseFloat(h.percent || 0) * 100, isContract: h.is_contract === 1, locked: h.is_locked === 1, tag: h.tag || '', balance: h.balance,
-        })),
-        ownerAddress:     token.owner_address || null,
-        ownerPercent:     parseFloat(token.owner_percent || 0) * 100,
-        chain,
-      };
-      _goplusCache.set(cacheKey, { val: evmResult, ts: Date.now() });
-      return evmResult;
-    }
+    const cexInfo = token.is_in_cex;
+    const evmResult = {
+      isHoneypot:       token.is_honeypot === '1',
+      honeypotReason:   token.honeypot_with_same_creator === '1' ? 'Same creator as known honeypot' : null,
+      buyTax:           parseFloat(token.buy_tax || 0) * 100,
+      sellTax:          parseFloat(token.sell_tax || 0) * 100,
+      transferTax:      parseFloat(token.transfer_tax || 0) * 100,
+      creatorAddress:   token.creator_address || null,
+      creatorPercent:   parseFloat(token.creator_percent || 0) * 100,
+      creatorMalicious: token.creator_address_malicious === '1',
+      isMintable:       token.is_mintable === '1',
+      isFreezable:      false,
+      isOpenSource:     token.is_open_source === '1',
+      isProxy:          token.is_proxy === '1',
+      cannotBuy:        token.cannot_buy === '1',
+      metadataMutable:  false,
+      isTrusted:        token.is_open_source === '1',
+      holderCount:      parseInt(token.holder_count || 0),
+      lpHolderCount:    parseInt(token.lp_holder_count || 0),
+      isInDex:          token.is_in_dex === '1',
+      isInCex:          cexInfo?.listed === '1',
+      cexList:          cexInfo?.cex_list || [],
+      lpHolders:        (token.lp_holders || []).slice(0, 5).map(h => ({
+        address: h.address, pct: parseFloat(h.percent || 0) * 100, locked: h.is_locked === 1, tag: h.tag || '',
+      })),
+      holders:          (token.holders || []).slice(0, 20).map(h => ({
+        address: h.address, pct: parseFloat(h.percent || 0) * 100, isContract: h.is_contract === 1, locked: h.is_locked === 1, tag: h.tag || '', balance: h.balance,
+      })),
+      ownerAddress:     token.owner_address || null,
+      ownerPercent:     parseFloat(token.owner_percent || 0) * 100,
+      chain,
+    };
+    _goplusCache.set(cacheKey, { val: evmResult, ts: Date.now() });
+    return evmResult;
   } catch (e) {
     console.error('[goplus]', e.message);
     // Return cached data if available, even if stale
@@ -212,54 +293,25 @@ async function fetchGoPlus(contractAddress, chain = 'solana') {
 }
 
 function detectChainFromAddress(addr) {
-  if (!addr) return 'solana';
+  if (!addr) return 'unsupported';
   if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr)) return 'tron';
   if (/^0x[0-9a-fA-F]{40}$/.test(addr))           return 'ethereum'; // generic EVM — DexScreener will find actual chain
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) return 'solana';
-  return 'solana';
+  return 'unsupported'; // Solana-style base58 addresses are no longer supported
 }
 
 function isValidAddr(addr, chain) {
   if (!addr) return false;
   if (chain === 'tron')    return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(addr);
-  if (chain === 'ethereum' || chain === 'bsc' || chain === 'base' || chain === 'arbitrum')
+  if (chain === 'ethereum' || chain === 'base' || chain === 'arbitrum')
     return /^0x[0-9a-fA-F]{40}$/.test(addr);
-  return addr.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(addr); // solana
+  return false;
 }
 
-
-// Public Solana RPCs — tried in round-robin; skip on 429
-const SOLANA_RPCS = [
-  'https://api.mainnet-beta.solana.com',
-  'https://solana-mainnet.rpc.extrnode.com',
-  'https://rpc.ankr.com/solana',
-  'https://solana.public-rpc.com',
-];
-let rpcIndex = 0;
-
-async function solanaRpc(method, params, retries = 3) {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    const url = SOLANA_RPCS[rpcIndex % SOLANA_RPCS.length];
-    rpcIndex++;
-    try {
-      const { data } = await axios.post(url,
-        { jsonrpc:'2.0', id: Date.now(), method, params },
-        { timeout: 8000, headers: { 'Content-Type':'application/json' } }
-      );
-      if (data.error?.code === 429) { await sleep(600 * (attempt + 1)); continue; }
-      if (data.error) return null;
-      return data.result;
-    } catch (_) {
-      await sleep(400 * (attempt + 1));
-    }
-  }
-  return null;
-}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ─── GeckoTerminal: Token info + liquidity ─────────────────────────────────────
-async function fetchGeckoToken(contractAddress, network = 'solana') {
+async function fetchGeckoToken(contractAddress, network = 'eth') {
   try {
     const { data } = await axios.get(
       `${GECKO}/networks/${network}/tokens/${contractAddress}`,
@@ -287,7 +339,7 @@ async function fetchGeckoToken(contractAddress, network = 'solana') {
 }
 
 // ─── GeckoTerminal: Pools (per-pool liquidity, txns, price changes) ────────────
-async function fetchGeckoPools(contractAddress, network = 'solana') {
+async function fetchGeckoPools(contractAddress, network = 'eth') {
   try {
     const { data } = await axios.get(
       `${GECKO}/networks/${network}/tokens/${contractAddress}/pools?page=1`,
@@ -324,7 +376,7 @@ async function fetchGeckoPools(contractAddress, network = 'solana') {
 }
 
 // ─── GeckoTerminal: Real OHLCV candles ────────────────────────────────────────
-async function fetchGeckoCandles(poolAddress, timeframe = 'minute', aggregate = 5, limit = 200, network = 'solana') {
+async function fetchGeckoCandles(poolAddress, timeframe = 'minute', aggregate = 5, limit = 200, network = 'eth') {
   try {
     const url = `${GECKO}/networks/${network}/pools/${poolAddress}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${limit}&currency=usd&token=base`;
     const { data } = await axios.get(url, { timeout: 8000, headers: GECKO_HEADS });
@@ -346,7 +398,7 @@ async function fetchGeckoCandles(poolAddress, timeframe = 'minute', aggregate = 
 }
 
 // ─── GeckoTerminal: Holders + distribution from /info endpoint ────────────────
-async function fetchGeckoHolders(contractAddress, network = 'solana') {
+async function fetchGeckoHolders(contractAddress, network = 'eth') {
   try {
     const { data } = await axios.get(
       `${GECKO}/networks/${network}/tokens/${contractAddress}/info`,
@@ -412,43 +464,40 @@ function shortAddr(addr) {
   return addr.slice(0, 4) + '...' + addr.slice(-4);
 }
 
-function isValidSolanaAddr(addr) {
-  return addr && addr.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(addr);
-}
-
 const EXPLORER_URL = {
-  solana:   addr => `https://solscan.io/account/${addr}`,
-  ethereum: addr => `https://etherscan.io/address/${addr}`,
-  bsc:      addr => `https://bscscan.com/address/${addr}`,
-  base:     addr => `https://basescan.org/address/${addr}`,
-  arbitrum: addr => `https://arbiscan.io/address/${addr}`,
-  tron:     addr => `https://tronscan.org/#/address/${addr}`,
+  ethereum:  addr => `${chainCfg('ethereum').explorer}/address/${addr}`,
+  base:      addr => `${chainCfg('base').explorer}/address/${addr}`,
+  arbitrum:  addr => `${chainCfg('arbitrum').explorer}/address/${addr}`,
+  tron:      addr => `https://tronscan.org/#/address/${addr}`,
+  robinhood: addr => `${chainCfg('robinhood').explorer}/address/${addr}`,
 };
 
-function explorerUrl(addr, chain = 'solana') {
+function explorerUrl(addr, chain = 'ethereum') {
   if (!addr) return null;
   if (!isValidAddr(addr, chain)) return null;
-  const fn = EXPLORER_URL[chain] || EXPLORER_URL.solana;
+  const fn = EXPLORER_URL[chain] || EXPLORER_URL.ethereum;
   return fn(addr);
 }
 
 // ─── 1. DexScreener: Token pairs + metadata ────────────────────────────────────
-async function fetchDexScreener(contractAddress, chainId = 'solana') {
+async function fetchDexScreener(contractAddress, chainId = 'ethereum') {
   const { data } = await axios.get(
     `${DEXSCREENER}/latest/dex/tokens/${contractAddress}`,
     { timeout: 10000 }
   );
   if (!data.pairs?.length) return null;
 
-  // For EVM addresses the actual chain (eth/bsc/base/arbitrum) is resolved by DexScreener
+  // For EVM addresses the actual chain (eth/base/arbitrum) is resolved by DexScreener
   // so we filter loosely: if chainId is 'ethereum' also accept eth/erc20 variants
-  const isEvm = ['ethereum','bsc','base','arbitrum'].includes(chainId);
+  const SUPPORTED_CHAINS = ['ethereum','base','arbitrum','robinhood','tron'];
+  const isEvm = ['ethereum','base','arbitrum','robinhood'].includes(chainId);
   const pairs = data.pairs
-    .filter(p => isEvm ? ['ethereum','bsc','base','arbitrum'].includes(p.chainId) : p.chainId === chainId)
+    .filter(p => isEvm ? ['ethereum','base','arbitrum','robinhood'].includes(p.chainId) : p.chainId === chainId)
     .sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0));
 
-  // If no pairs matched the expected chain, fall back to highest-volume across all chains
-  const bestPairs = pairs.length ? pairs : data.pairs.sort((a,b) => (b.volume?.h24||0)-(a.volume?.h24||0));
+  // If no pairs matched the expected chain, fall back to highest-volume among supported chains only
+  const fallbackPairs = data.pairs.filter(p => SUPPORTED_CHAINS.includes(p.chainId)).sort((a,b) => (b.volume?.h24||0)-(a.volume?.h24||0));
+  const bestPairs = pairs.length ? pairs : fallbackPairs;
   if (!bestPairs.length) return null;
 
   // Expose the actual detected chain from DexScreener
@@ -521,7 +570,7 @@ async function fetchDexScreener(contractAddress, chainId = 'solana') {
 }
 
 // ─── 2. DexScreener: Real OHLCV candles ────────────────────────────────────────
-async function fetchCandles(pairAddress, res = '5', chainId = 'solana') {
+async function fetchCandles(pairAddress, res = '5', chainId = 'ethereum') {
   const to   = Math.floor(Date.now() / 1000);
   const from = to - 86400; // last 24h
 
@@ -725,7 +774,7 @@ async function fetchPoolTraders(poolAddress, network, pairCreatedAt) {
 
 // ─── Build wallet entries from DexScreener pairs data ──────────────────────────
 // Returns real LP pair addresses + derived risk data — no fake wallet addresses
-function buildWalletsFromDex(dex, totalSupply, chain = 'solana') {
+function buildWalletsFromDex(dex, totalSupply, chain = 'ethereum') {
   if (!dex) return [];
   const allPairs  = dex.allPairsData || [];
   const supply    = totalSupply || (dex.marketCap > 0 && dex.price > 0 ? dex.marketCap / dex.price : null);
@@ -1346,7 +1395,11 @@ app.post('/api/analyze', async (req, res) => {
       ? detectChainFromAddress(contractAddress)
       : requestedChain;
 
-    const geckoNetwork = GECKO_NETWORK[resolvedChain] || 'solana';
+    if (resolvedChain === 'solana' || resolvedChain === 'bsc' || resolvedChain === 'unsupported') {
+      return res.status(400).json({ error: 'Solana and BSC are no longer supported on Bloombark. Supported chains: Ethereum, Base, Arbitrum, Robinhood Chain.' });
+    }
+
+    const geckoNetwork = GECKO_NETWORK[resolvedChain] || 'eth';
     const dsChainId    = DS_CHAIN[resolvedChain]    || resolvedChain;
 
     console.log(`\n[ANALYZE] ${contractAddress} chain=${resolvedChain} (gecko:${geckoNetwork} ds:${dsChainId})`);
@@ -1357,7 +1410,6 @@ app.post('/api/analyze', async (req, res) => {
     // Use DexScreener's detected chain (most accurate for EVM — e.g. resolves 0x to 'base' not 'ethereum')
     const actualChain   = dex?.chain || resolvedChain;
     const actualGecko   = GECKO_NETWORK[actualChain] || geckoNetwork;
-    const actualIsSolana = actualChain === 'solana';
 
     console.log(`  → actual chain: ${actualChain} (gecko: ${actualGecko})`);
 
@@ -1477,75 +1529,7 @@ app.post('/api/analyze', async (req, res) => {
     const dexWallets = buildWalletsFromDex(merged, gecko?.totalSupply || null, actualChain);
     console.log(`  [ds-wallets] ${dexWallets.length} wallets from DS pairs`);
 
-    // ── Solana: fetch real traders from pool transactions via public RPC ───────
-    let solanaTopHolders = [];
-    if (actualChain === 'solana') {
-      try {
-        const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
-        // Get pool addresses from DexScreener pairs
-        const poolAddrs = (merged.allPairsData || []).slice(0, 3).map(p => p.pair).filter(Boolean);
-        if (merged.pairAddress) poolAddrs.unshift(merged.pairAddress);
-        const uniquePools = [...new Set(poolAddrs)].slice(0, 3);
-
-        const traderCount = {}; // wallet → tx count
-
-        await Promise.allSettled(uniquePools.map(async (poolAddr) => {
-          const sigRes = await axios.post(SOLANA_RPC, {
-            jsonrpc: '2.0', id: 1, method: 'getSignaturesForAddress',
-            params: [poolAddr, { limit: 40 }],
-          }, { timeout: 6000 });
-          const sigs = sigRes.data?.result || [];
-
-          const txResults = await Promise.allSettled(
-            sigs.slice(0, 15).map(s =>
-              axios.post(SOLANA_RPC, {
-                jsonrpc: '2.0', id: 1, method: 'getTransaction',
-                params: [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
-              }, { timeout: 4000 }).then(r => r.data?.result)
-            )
-          );
-
-          for (const tx of txResults) {
-            if (tx.status !== 'fulfilled' || !tx.value) continue;
-            const keys = tx.value?.transaction?.message?.accountKeys || [];
-            for (const k of keys.slice(0, 2)) {
-              const pub = typeof k === 'string' ? k : k.pubkey;
-              if (!pub || uniquePools.includes(pub)) continue;
-              traderCount[pub] = (traderCount[pub] || 0) + 1;
-            }
-          }
-        }));
-
-        // Top traders by tx count → proxy for whale holders
-        const sorted = Object.entries(traderCount).sort((a, b) => b[1] - a[1]).slice(0, 20);
-        // Estimate supply% by rank: top trader ~8%, then tapering
-        const totalTraders = sorted.length || 1;
-        sorted.forEach(([addr, count], i) => {
-          const type = i < 3 ? 'Whale' : i < 8 ? 'Top Holder' : 'Holder';
-          // Rough estimate: top holder ~8%, drops off exponentially
-          const estPct = parseFloat((8 * Math.pow(0.72, i)).toFixed(2));
-          solanaTopHolders.push({
-            address:    addr,
-            shortAddr:  addr.slice(0,6)+'…'+addr.slice(-4),
-            type,
-            allocation: estPct,
-            supplyPct:  estPct,
-            riskScore:  type === 'Whale' ? 75 : type === 'Top Holder' ? 50 : 30,
-            isRealData: true,
-            tag:        `${count} txns`,
-            txCount7d:  count,
-            activity:   Array.from({length:7},()=>Math.random()>0.5?Math.random():0),
-            lastActive: 'Today',
-            isEstimated: true,
-          });
-        });
-        console.log(`  [solana-rpc] ${solanaTopHolders.length} traders from pool txns`);
-        // Cache for wallet-map endpoint to reuse without re-fetching
-        _wmc(`sol-traders:${contractAddress}`, solanaTopHolders);
-      } catch (e) {
-        console.log(`  [solana-rpc] holder fetch failed: ${e.message}`);
-      }
-    }
+    const solanaTopHolders = []; // Solana no longer supported — kept as empty array for downstream code
 
     // ── Holder data (for distribution stats) — still derived from DexScreener ──
     const holderData = deriveHoldersFromDex(contractAddress, merged, gecko?.totalSupply || null);
@@ -1835,15 +1819,16 @@ function resampleCandles(candles5m, intervalSecs) {
 // ─── Recent Trades endpoint ─────────────────────────────────────────────────────
 app.post('/api/recent-trades', async (req, res) => {
   try {
-    const { poolAddress, network = 'solana' } = req.body;
+    const { poolAddress, network = 'eth', limit: reqLimit } = req.body;
     if (!poolAddress) return res.json({ success: false, trades: [] });
 
-    const url = `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/trades?limit=30`;
+    const limit = Math.min(Math.max(parseInt(reqLimit) || 30, 1), 300);
+    const url = `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${poolAddress}/trades?limit=${limit}`;
     const { data } = await axios.get(url, { timeout: 10000, headers: GECKO_HEADS });
     const raw = data?.data || [];
     const nowMs = Date.now();
 
-    const trades = raw.slice(0, 30).map(t => {
+    const trades = raw.slice(0, limit).map(t => {
       const a       = t.attributes;
       const tsMs    = a.block_timestamp ? new Date(a.block_timestamp).getTime() : nowMs;
       const agoMs   = nowMs - tsMs;
@@ -1852,10 +1837,21 @@ app.post('/api/recent-trades', async (req, res) => {
         : `${Math.floor(agoMs/3600000)}h ago`;
       const vol     = parseFloat(a.volume_in_usd || 0);
       const addr    = a.tx_from_address || '';
+      // Execution price of the BASE token at trade time:
+      // buy → base token is the "to" side; sell → base token is the "from" side
+      const priceUsd = parseFloat(
+        (a.kind === 'buy' ? a.price_to_in_usd : a.price_from_in_usd) || 0
+      );
+      // Base token amount traded
+      const amount = parseFloat(
+        (a.kind === 'buy' ? a.to_token_amount : a.from_token_amount) || 0
+      );
       return {
         type:      a.kind === 'buy' ? 'Buy' : 'Sell',
         isBuy:     a.kind === 'buy',
         volUsd:    vol,
+        priceUsd,
+        amount,
         wallet:    addr ? shortAddr(addr) : '—',
         walletFull: addr,
         txHash:    a.tx_hash || '',
@@ -1992,7 +1988,7 @@ app.get('/api/search', async (req, res) => {
     const { q } = req.query;
     const { data } = await axios.get(`${DEXSCREENER}/latest/dex/search?q=${encodeURIComponent(q)}`, { timeout: 8000 });
     const tokens = (data.pairs || [])
-      .filter(p => p.chainId === 'solana')
+      .filter(p => ['ethereum','base','arbitrum','robinhood'].includes(p.chainId))
       .slice(0, 10)
       .map(p => ({
         address: p.baseToken?.address,
@@ -2010,12 +2006,122 @@ app.get('/api/search', async (req, res) => {
 });
 
 // ─── Trending tokens from DexScreener ─────────────────────────────────────────
+// ─── Narrative Tracker ────────────────────────────────────────────────────────
+const NARRATIVE_CATEGORIES = [
+  { id: 'artificial-intelligence', label: 'AI & Machine Learning', icon: '🤖' },
+  { id: 'meme-token',              label: 'Memecoins',             icon: '🐸' },
+  { id: 'decentralized-finance-defi', label: 'DeFi',              icon: '🏦' },
+  { id: 'real-world-assets-rwa',   label: 'Real World Assets',    icon: '🏛' },
+  { id: 'depin',                   label: 'DePIN',                 icon: '📡' },
+  { id: 'gaming',                  label: 'GameFi',                icon: '🎮' },
+  { id: 'layer-2',                 label: 'Layer 2',               icon: '⚡' },
+  { id: 'non-fungible-tokens-nft', label: 'NFT',                   icon: '🖼' },
+  { id: 'socialfi',                label: 'SocialFi',              icon: '💬' },
+  { id: 'liquid-staking',          label: 'Liquid Staking',        icon: '💧' },
+  { id: 'restaking',               label: 'Restaking',             icon: '🔄' },
+  { id: 'prediction-markets',      label: 'Prediction Markets',    icon: '🔮' },
+  { id: 'metaverse',               label: 'Metaverse',             icon: '🌐' },
+  { id: 'ai-meme-coins',           label: 'AI Memes',              icon: '🧠' },
+  { id: 'base-meme-coins',         label: 'Base Memes',            icon: '🔵' },
+];
+
+let _narrativeCache = null;
+let _narrativeCacheAt = 0;
+let _narrativeFetching = false;
+const NARRATIVE_TTL = (parseInt(process.env.NARRATIVE_TTL_MIN) || 60) * 60 * 1000; // default 1 hour
+
+async function _fetchNarrativeCounts(byId) {
+  const countById = {};
+  for (let i = 0; i < NARRATIVE_CATEGORIES.length; i++) {
+    const n = NARRATIVE_CATEGORIES[i];
+    try {
+      const r = await axios.get(
+        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&category=${n.id}&per_page=250&page=1`,
+        { timeout: 12000 }
+      );
+      countById[n.id] = (Array.isArray(r.data) && !r.data?.status) ? r.data.length : 0;
+    } catch { countById[n.id] = 0; }
+    await new Promise(r => setTimeout(r, CONFIG.narrativeFetchDelayMs)); // rate-limit spacing
+  }
+  return countById;
+}
+
+async function _warmNarrative() {
+  if (_narrativeFetching) return;
+  _narrativeFetching = true;
+  try {
+    const { data } = await axios.get(
+      'https://api.coingecko.com/api/v3/coins/categories?order=market_cap_desc',
+      { timeout: 12000 }
+    );
+    const byId = {};
+    for (const c of data) byId[c.id] = c;
+
+    // Serve partial data immediately, then update with counts
+    const partial = NARRATIVE_CATEGORIES.map(n => {
+      const c = byId[n.id] || {};
+      return { id:n.id, label:n.label, icon:n.icon, marketCap:c.market_cap||0, change24h:c.market_cap_change_24h||0, volume24h:c.volume_24h||0, topCoins:(c.top_3_coins||[]).slice(0,3), coinCount:0 };
+    });
+    if (!_narrativeCache) { _narrativeCache = partial; _narrativeCacheAt = Date.now(); }
+
+    const countById = await _fetchNarrativeCounts(byId);
+    _narrativeCache = partial.map(n => ({ ...n, coinCount: countById[n.id] || 0 }));
+    _narrativeCacheAt = Date.now();
+    const missing = _narrativeCache.filter(n => n.coinCount === 0).length;
+    console.log(`[narrative] cache warmed — ${_narrativeCache.length - missing} counts ok, ${missing} missing`);
+
+    // Retry missing counts after 10 minutes
+    if (missing > 0) {
+      setTimeout(async () => {
+        try {
+          for (const n of _narrativeCache.filter(n => n.coinCount === 0)) {
+            try {
+              const r = await axios.get(
+                `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&category=${n.id}&per_page=250&page=1`,
+                { timeout: 12000 }
+              );
+              n.coinCount = (Array.isArray(r.data) && !r.data?.status) ? r.data.length : 0;
+            } catch {}
+            await new Promise(r => setTimeout(r, CONFIG.narrativeFetchDelayMs));
+          }
+          console.log('[narrative] retry counts done');
+        } catch {}
+      }, CONFIG.narrativeRetryDelayMs);
+    }
+  } catch (e) { console.error('[narrative warm]', e.message); }
+  finally { _narrativeFetching = false; }
+}
+
+app.get('/api/narrative', async (req, res) => {
+  try {
+    if (_narrativeCache && Date.now() - _narrativeCacheAt < NARRATIVE_TTL) {
+      return res.json({ success: true, data: _narrativeCache });
+    }
+    // Start background warm, return partial immediately if available
+    _warmNarrative();
+    // Wait up to NARRATIVE_WAIT_TIMEOUT_SEC for at least partial data
+    const _waitSteps = Math.ceil(CONFIG.narrativeWaitTimeoutMs / 1000);
+    for (let i = 0; i < _waitSteps; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      if (_narrativeCache) return res.json({ success: true, data: _narrativeCache });
+    }
+    res.json({ success: false, error: 'Data loading, try again shortly' });
+  } catch (e) {
+    console.error('[narrative]', e.message);
+    if (_narrativeCache) return res.json({ success: true, data: _narrativeCache });
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Pre-warm narrative on server start (background)
+setTimeout(() => _warmNarrative(), CONFIG.narrativeWarmDelayMs);
+
 app.get('/api/trending', async (req, res) => {
   try {
     // Use DexScreener boosted/trending endpoint
     const { data } = await axios.get(`${DEXSCREENER}/token-boosts/top/v1`, { timeout: 8000 });
     const tokens = (data || [])
-      .filter(t => t.chainId === 'solana')
+      .filter(t => ['ethereum','base','arbitrum','robinhood'].includes(t.chainId))
       .slice(0, 5)
       .map(t => ({
         symbol:  t.description?.split(' ')[0] || t.tokenAddress?.slice(0,6),
@@ -2030,43 +2136,33 @@ app.get('/api/trending', async (req, res) => {
     throw new Error('No trending data');
   } catch (_) {
     res.json({ success: true, data: [
-      { symbol:'TOESCOIN', name:'TOES',       address:'6ehEcTMCc85aNF4x9CWx8HuvWGhxQtvKdhKVf2HDpump', risk:71, change:67.3,  volume:9800000 },
-      { symbol:'WIF',      name:'dogwifhat',  address:'EKpQGSJsJvxGKhnqtpeRSMU3wJWPRBmEJFjBUfAD8M7e', risk:38, change:5.2,   volume:22100000 },
-      { symbol:'BONK',     name:'Bonk',       address:'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',  risk:42, change:12.5,  volume:15200000 },
-      { symbol:'GOAT',     name:'Goatseus',   address:'CzLSujWBLFsSjncfkh59rUFqvafWcY5tzedWJSuypump', risk:62, change:-8.4,  volume:4300000 },
-      { symbol:'MOODENG',  name:'Moo Deng',   address:'ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzc8eu', risk:55, change:45.1,  volume:6700000 },
+      { symbol:'PEPE',  name:'Pepe',        address:'0x6982508145454Ce325dDbE47a25d4ec3d2311933', risk:65, change:12.3,  volume:18400000 },
+      { symbol:'SHIB',  name:'Shiba Inu',   address:'0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE', risk:40, change:4.1,   volume:22100000 },
+      { symbol:'BRETT', name:'Brett',       address:'0x532f27101965dd16442E59d40670FaF5eBB142E4', risk:58, change:9.8,   volume:9700000 },
+      { symbol:'AERO',  name:'Aerodrome',   address:'0x940181a94A35A4569E4529A3CDfB74e38FD98631', risk:35, change:-3.2,  volume:6300000 },
+      { symbol:'VIRTUAL', name:'Virtuals',  address:'0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b', risk:52, change:15.6,  volume:11200000 },
     ]});
   }
 });
 
 // ─── Market Overview: Hybrid DexScreener (trending/volume) + GT (new pairs) ────
-const DASH_CACHE_TTL = 2 * 60 * 1000;  // 2 minutes
-const DASH_CHAINS    = ['solana', 'ethereum', 'bsc', 'base'];
-const GT_NET         = { solana:'solana', ethereum:'eth', bsc:'bsc', base:'base' };
+const DASH_CACHE_TTL = (parseInt(process.env.DASHBOARD_TTL_SEC) || 120) * 1000;  // default 2 minutes
+const DASH_CHAINS    = ['ethereum', 'base', 'robinhood'];
+const GT_NET         = { ethereum:'eth', base:'base', robinhood:'robinhood' };
 
-// Cache per key: 'all' | 'solana' | 'ethereum' | 'bsc' | 'base'
+// Cache per key: 'all' | 'ethereum' | 'base' | 'robinhood'
 const _dashCaches   = {};
 const _dashFetching = {};
 
-const _dashChainLabel = id => ({ ethereum:'Ethereum', bsc:'BSC', base:'Base', solana:'Solana' }[id] || id);
+const _dashChainLabel = id => ({ ethereum:'Ethereum', base:'Base', robinhood:'Robinhood' }[id] || id);
 const SUPPORTED_DASH  = new Set(DASH_CHAINS);
 
 // DexScreener search queries for All Chains trending + volume (parallel, no rate limit)
-const DS_ALL_QUERIES = ['usdt','weth','usdc','sol','bnb','pepe','bonk','wbtc','brett','cake'];
+const DS_ALL_QUERIES = ['usdt','weth','usdc','pepe','wbtc','brett','aero','virtual','uni','link'];
 
 // DexScreener token addresses per chain for per-chain view
 // Token addresses per chain for DexScreener token queries
 const DS_CHAIN_TOKENS = {
-  solana:   [
-    'So11111111111111111111111111111111111111112',   // SOL
-    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
-    'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', // WIF
-    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  // JUP
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',  // USDT SOL
-    '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',  // ETH (Wormhole)
-    'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
-  ],
   ethereum: [
     '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',   // WETH
     '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE',   // SHIB
@@ -2079,16 +2175,6 @@ const DS_CHAIN_TOKENS = {
     '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE',   // AAVE
     '0xD533a949740bb3306d119CC777fa900bA034cd52',   // CRV
   ],
-  bsc:      [
-    '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',   // WBNB
-    '0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82',   // CAKE
-    '0x55d398326f99059fF775485246999027B3197955',   // USDT BSC
-    '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c',   // BTCB
-    '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',   // USDC BSC
-    '0x2170Ed0880ac9A755fd29B2688956BD959F933F8',   // ETH BSC
-    '0xbA2aE424d960c26247Dd6c32edC70B295c744C43',   // DOGE BSC
-    '0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE',   // XRP BSC
-  ],
   base:     [
     '0x4200000000000000000000000000000000000006',   // WETH Base
     '0x532f27101965dd16442E59d40670FaF5eBB142E4',   // BRETT
@@ -2098,6 +2184,10 @@ const DS_CHAIN_TOKENS = {
     '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',   // DAI Base
     '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',   // cbETH
     '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b',   // VIRTUAL
+  ],
+  robinhood: [
+    '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',   // WETH on Robinhood Chain
+    '0xfB4729659eeF22Bfc1c2B680F6F873f8147aaaab',   // ROBIN
   ],
 };
 
@@ -2124,7 +2214,7 @@ const _mapDS = p => {
 };
 
 // Map a GeckoTerminal pool to unified format (for new pairs)
-const GT_NET_MAP = { eth:'ethereum', bsc:'bsc', base:'base', solana:'solana' };
+const GT_NET_MAP = { eth:'ethereum', base:'base', robinhood:'robinhood' };
 const _mapGT = p => {
   const a      = p.attributes || {};
   const rawNet = p.relationships?.network?.data?.id || p.id?.split('_')[0] || 'unknown';
@@ -2188,29 +2278,32 @@ async function _fetchDash(key) {
     let gtNewRaw = [];
 
     if (key === 'all') {
-      // All Chains: DexScreener search queries only — no GT calls at all
-      const results = await Promise.all(
-        DS_ALL_QUERIES.map(q => _dsGet(`${DEXSCREENER}/latest/dex/search?q=${q}`))
-      );
-      dsPairs = results.flatMap(r => (r?.data?.pairs || []).map(_mapDS));
+      // All Chains: DexScreener generic queries + Robinhood-specific queries (tokens differ from other chains)
+      const [generalRes, robinhoodRes] = await Promise.all([
+        Promise.all(DS_ALL_QUERIES.map(q => _dsGet(`${DEXSCREENER}/latest/dex/search?q=${q}`))),
+        Promise.all(['robin','cashcat','tendies','wood','home'].map(q => _dsGet(`${DEXSCREENER}/latest/dex/search?q=${q}&chainIds=robinhood`))),
+      ]);
+      dsPairs = [
+        ...generalRes.flatMap(r => (r?.data?.pairs || []).map(_mapDS)),
+        ...robinhoodRes.flatMap(r => (r?.data?.pairs || []).filter(p => p?.chainId === 'robinhood').map(_mapDS)),
+      ];
     } else {
       // Per-chain: DS token addresses + DS searches filtered to chain + 1 GT new_pools
       const addrs   = DS_CHAIN_TOKENS[key] || [];
       const chainSearches = {
-        solana:   ['sol','bonk','wif','jup','pump'],
-        ethereum: ['weth','pepe','shib','uni','link','aave','crv','mkr'],
-        bsc:      ['bnb','cake','bsc','btcb','xrp'],
-        base:     ['base','brett','aero','cbbtc','virtual'],
+        ethereum:  ['weth','pepe','shib','uni','link','aave','crv','mkr'],
+        base:      ['base','brett','aero','cbbtc','virtual'],
+        robinhood: ['robin','cashcat','tendies','wood','home'],
       }[key] || [];
 
       const [dsAddrRes, dsSearchRes, gtRes] = await Promise.all([
         Promise.all(addrs.map(a => _dsGet(`${DEXSCREENER}/latest/dex/tokens/${a}`))),
-        Promise.all(chainSearches.map(q => _dsGet(`${DEXSCREENER}/latest/dex/search?q=${q}`))),
-        _gtGet(`${GECKO}/networks/${GT_NET[key]}/new_pools?page=1`),
+        Promise.all(chainSearches.map(q => _dsGet(`${DEXSCREENER}/latest/dex/search?q=${q}&chainIds=${key}`))),
+        GT_NET[key] ? _gtGet(`${GECKO}/networks/${GT_NET[key]}/new_pools?page=1`) : Promise.resolve(null),
       ]);
       dsPairs  = [
-        ...dsAddrRes.flatMap(r => (r?.data?.pairs || []).map(_mapDS)),
-        ...dsSearchRes.flatMap(r => (r?.data?.pairs || []).map(_mapDS)),
+        ...dsAddrRes.flatMap(r => (r?.data?.pairs || []).filter(p => p?.chainId === key).map(_mapDS)),
+        ...dsSearchRes.flatMap(r => (r?.data?.pairs || []).filter(p => p?.chainId === key).map(_mapDS)),
       ].filter(p => p && p.networkId === key);
       gtNewRaw = gtRes?.data?.data || [];
     }
@@ -2220,6 +2313,10 @@ async function _fetchDash(key) {
     if (hasData) {
       _dashCaches[key] = { payload, at: Date.now() };
       console.log(`[dash:${key}] BV=${payload.data.bestVolume.length} TR=${payload.data.trending.length} NP=${payload.data.newPairs.length}`);
+    } else {
+      // Cache empty result to avoid repeated 503s for chains not yet indexed
+      _dashCaches[key] = { payload: { ...payload, empty: true }, at: Date.now() };
+      console.log(`[dash:${key}] no data available (chain may not be indexed yet)`);
     }
   } catch (e) {
     console.error(`Dashboard fetch error [${key}]:`, e.message);
@@ -2244,29 +2341,395 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 // Pre-warm "all" on startup; per-chain loaded on demand
-setTimeout(() => _fetchDash('all'), 1000);
+setTimeout(() => _fetchDash('all'), CONFIG.dashWarmDelayMs);
 setInterval(() => _fetchDash('all'), DASH_CACHE_TTL);
 
-// ─── WebSocket: realtime price ticks ──────────────────────────────────────────
+// ─── WebSocket: realtime price ticks + community chat ─────────────────────────
 const subscribers = new Map();
 
-wss.on('connection', (ws) => {
-  ws.on('message', (raw) => {
+// Chat state
+const chatRooms = {
+  general:  { name: 'General',   icon: '💬', messages: [] },
+  trading:  { name: 'Trading',   icon: '📈', messages: [] },
+  alpha:    { name: 'Alpha',     icon: '🔥', messages: [] },
+  freeshill:{ name: 'Free Shill',icon: '📣', messages: [] },
+  holders:  { name: 'Holders',   icon: '💎', messages: [] },
+};
+const MAX_CHAT_HISTORY = CONFIG.chatHistoryLimit;
+const chatUsers = new Map(); // ws -> { wallet, displayName, joinedAt }
+
+// ─── Token-gated channels (parameterized via config / env) ────────────────────
+// A channel unlocks when the wallet holds at least `minAmount` of a token on
+// `chain`. If `token` (a CA) is set → checks that ERC-20 balance; otherwise →
+// checks the native coin (ETH) balance. The gate queries the chain's ACTIVE
+// network RPC (Sepolia in testnet mode locally). Override any field with env.
+const CHANNEL_GATES = {
+  holders: {
+    chain:     process.env.HOLDERS_GATE_CHAIN  || 'ethereum',
+    token:     process.env.HOLDERS_GATE_TOKEN  || null,  // null → native ETH gate; set a CA → ERC-20 gate
+    minAmount: parseFloat(process.env.HOLDERS_GATE_MIN || '0.01'),
+    symbol:    process.env.HOLDERS_GATE_SYMBOL || '',    // blank → auto (native coin symbol)
+  },
+};
+const _gateCache = new Map(); // `${room}:${wallet}` -> { val, ts }
+
+async function _ethCall(rpcUrl, to, data) {
+  const r = await axios.post(rpcUrl,
+    { jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] },
+    { timeout: 8000, headers: { 'Content-Type': 'application/json' } });
+  return r.data?.result || '0x';
+}
+
+async function _nativeBalanceOnChain(rpcUrl, wallet) {
+  const r = await axios.post(rpcUrl,
+    { jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [wallet, 'latest'] },
+    { timeout: 8000, headers: { 'Content-Type': 'application/json' } });
+  const hex = r.data?.result || '0x0';
+  return Number(BigInt(hex)) / 1e18;
+}
+
+// ERC-20 balanceOf(wallet) → human-readable amount (auto-fetches decimals)
+async function _erc20BalanceOf(rpcUrl, token, wallet) {
+  const balData = '0x70a08231' + wallet.toLowerCase().replace('0x', '').padStart(64, '0');
+  const [balHex, decHex] = await Promise.all([
+    _ethCall(rpcUrl, token, balData),
+    _ethCall(rpcUrl, token, '0x313ce567'), // decimals()
+  ]);
+  const decimals = (decHex && decHex !== '0x') ? parseInt(decHex, 16) : 18;
+  const raw = (balHex && balHex !== '0x') ? BigInt(balHex) : 0n;
+  return Number(raw) / Math.pow(10, decimals);
+}
+
+const _isAddr = a => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a);
+
+// Returns { gated, ok, minAmount, symbol, token, network, balance }
+async function checkChannelGate(room, wallet) {
+  const gate = CHANNEL_GATES[room];
+  if (!gate) return { gated: false, ok: true };
+  const cfg     = chainCfg(gate.chain);
+  const network = cfg.name || (gate.chain.charAt(0).toUpperCase() + gate.chain.slice(1));
+  const isToken = _isAddr(gate.token);
+  const symbol  = gate.symbol || (isToken ? 'TOKEN' : 'ETH'); // native coin symbol default
+  const base = { gated: true, minAmount: gate.minAmount, symbol, token: isToken ? gate.token : null, network };
+
+  if (!wallet || !_isAddr(wallet)) {
+    return { ...base, ok: false, balance: 0, reason: 'no_wallet' };
+  }
+  const key = `${room}:${wallet.toLowerCase()}`;
+  const cached = _gateCache.get(key);
+  if (cached && Date.now() - cached.ts < CONFIG.gateCacheTtlMs) return cached.val;
+
+  let balance = 0;
+  try {
+    balance = isToken
+      ? await _erc20BalanceOf(cfg.rpc, gate.token, wallet)
+      : await _nativeBalanceOnChain(cfg.rpc, wallet);
+  } catch (_) {}
+  const val = { ...base, ok: balance >= gate.minAmount, balance };
+  _gateCache.set(key, { val, ts: Date.now() });
+  return val;
+}
+
+// Gate status for all gated rooms — used by the frontend to lock/unlock the UI
+app.get('/api/community/gate/:wallet', async (req, res) => {
+  const wallet = req.params.wallet === 'none' ? null : req.params.wallet;
+  const out = {};
+  for (const room of Object.keys(CHANNEL_GATES)) {
+    out[room] = await checkChannelGate(room, wallet);
+  }
+  res.json({ gates: out });
+});
+
+function broadcastChat(room, payload) {
+  wss.clients.forEach(c => {
+    if (c.readyState === WebSocket.OPEN && chatUsers.has(c)) {
+      c.send(JSON.stringify(payload));
+    }
+  });
+}
+
+function onlineCount() { return chatUsers.size; }
+
+function shortAddr(addr) {
+  if (!addr) return 'Anon';
+  if (addr.length < 12) return addr;
+  return addr.slice(0, 4) + '...' + addr.slice(-4);
+}
+
+// ─── Bloombark Chat Bot: auto-analyzes contract addresses posted in chat ─────
+const BOT_NAME = 'BloomBot';
+// Bloombark logo (4-color square grid) as the bot's avatar
+const BOT_AVATAR = 'data:image/svg+xml;base64,' + Buffer.from(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64">
+    <rect width="24" height="24" rx="6" fill="#13161d"/>
+    <rect x="3" y="3" width="8" height="8" rx="2" fill="#E86C3A"/>
+    <rect x="13" y="3" width="8" height="8" rx="2" fill="#F5A623"/>
+    <rect x="3" y="13" width="8" height="8" rx="2" fill="#27C97F"/>
+    <rect x="13" y="13" width="8" height="8" rx="2" fill="#4a90d9"/>
+  </svg>`
+).toString('base64');
+const BOT_CHAINS = new Set(['ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'robinhood']);
+const _botCooldown = new Map(); // ca -> last reply ts (avoid spamming same CA)
+
+const _svgEsc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+
+function _botFmtUsd(v) {
+  v = parseFloat(v) || 0;
+  if (v >= 1e9) return '$' + (v/1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return '$' + (v/1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return '$' + (v/1e3).toFixed(1) + 'K';
+  return '$' + v.toFixed(2);
+}
+function _botFmtPrice(p) {
+  p = parseFloat(p) || 0;
+  if (p === 0) return '$0';
+  if (p < 0.0001) return '$' + p.toExponential(3);
+  if (p < 1) return '$' + p.toFixed(6);
+  return '$' + p.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+// Bloombark-styled result card rendered as an SVG data-URL image
+function _botSvgCard(info) {
+  const sigColor = info.signal === 'BULLISH' ? '#27c97f' : info.signal === 'BEARISH' ? '#f0484b' : '#f5a623';
+  const chgColor = info.change24h >= 0 ? '#27c97f' : '#f0484b';
+  const chgText  = (info.change24h >= 0 ? '+' : '') + info.change24h.toFixed(2) + '%';
+  const stats = [
+    ['MARKET CAP', _botFmtUsd(info.marketCap)],
+    ['LIQUIDITY',  _botFmtUsd(info.liquidity)],
+    ['VOL 24H',    _botFmtUsd(info.volume24h)],
+    ['BUY RATIO',  info.buyRatio + '%'],
+  ];
+  const statCells = stats.map(([label, val], i) => `
+    <g transform="translate(${28 + i * 126}, 268)">
+      <text x="0" y="0" font-family="Menlo, monospace" font-size="9" fill="#6b7280" letter-spacing="1">${label}</text>
+      <text x="0" y="22" font-family="Menlo, monospace" font-size="15" font-weight="bold" fill="#e2e8f0">${_svgEsc(val)}</text>
+    </g>`).join('');
+
+  const svg = `<svg width="560" height="330" viewBox="0 0 560 330" xmlns="http://www.w3.org/2000/svg">
+  <rect width="560" height="330" rx="16" fill="#13161d"/>
+  <rect x="0.5" y="0.5" width="559" height="329" rx="16" fill="none" stroke="#27c97f40"/>
+  <rect x="0" y="0" width="560" height="52" rx="16" fill="#161a23"/>
+  <rect x="0" y="36" width="560" height="16" fill="#161a23"/>
+  <circle cx="30" cy="26" r="9" fill="#27c97f22" stroke="#27c97f" stroke-width="1.5"/>
+  <path d="M26 29 L30 21 L34 29" stroke="#27c97f" stroke-width="1.5" fill="none"/>
+  <text x="48" y="30" font-family="Menlo, monospace" font-size="13" font-weight="bold" fill="#e2e8f0" letter-spacing="2">BLOOMBARK</text>
+  <text x="152" y="30" font-family="Menlo, monospace" font-size="9" fill="#6b7280" letter-spacing="1">AI TOKEN SCAN</text>
+  <rect x="${560 - 118}" y="14" width="96" height="24" rx="12" fill="${sigColor}22" stroke="${sigColor}"/>
+  <text x="${560 - 70}" y="30" font-family="Menlo, monospace" font-size="11" font-weight="bold" fill="${sigColor}" text-anchor="middle">${info.signal}</text>
+
+  <circle cx="46" cy="94" r="20" fill="#27c97f1f"/>
+  <text x="46" y="100" font-family="Menlo, monospace" font-size="16" font-weight="bold" fill="#27c97f" text-anchor="middle">${_svgEsc((info.symbol || '?')[0])}</text>
+  <text x="78" y="88" font-family="Menlo, monospace" font-size="19" font-weight="bold" fill="#e2e8f0">${_svgEsc(info.symbol)}</text>
+  <text x="78" y="106" font-family="Menlo, monospace" font-size="11" fill="#6b7280">${_svgEsc((info.name || '').slice(0, 34))}</text>
+  <rect x="${78 + Math.min(String(info.symbol||'').length, 12) * 12 + 10}" y="72" width="${info.chain.length * 8 + 18}" height="19" rx="9.5" fill="#27c97f15" stroke="#27c97f50"/>
+  <text x="${78 + Math.min(String(info.symbol||'').length, 12) * 12 + 19}" y="85" font-family="Menlo, monospace" font-size="9" font-weight="bold" fill="#27c97f" letter-spacing="1">${_svgEsc(info.chain.toUpperCase())}</text>
+
+  <text x="28" y="168" font-family="Menlo, monospace" font-size="9" fill="#6b7280" letter-spacing="1.5">CURRENT PRICE</text>
+  <text x="28" y="204" font-family="Menlo, monospace" font-size="32" font-weight="bold" fill="#27c97f">${_svgEsc(_botFmtPrice(info.price))}</text>
+  <text x="28" y="228" font-family="Menlo, monospace" font-size="13" font-weight="bold" fill="${chgColor}">${chgText} (24h)</text>
+
+  <g transform="translate(360, 150)">
+    <rect x="0" y="0" width="172" height="86" rx="12" fill="#161a23" stroke="${sigColor}40"/>
+    <text x="86" y="22" font-family="Menlo, monospace" font-size="9" fill="#6b7280" letter-spacing="1.5" text-anchor="middle">AI PREDICTION</text>
+    <text x="86" y="50" font-family="Menlo, monospace" font-size="19" font-weight="bold" fill="${sigColor}" text-anchor="middle">${info.signal}</text>
+    <text x="86" y="72" font-family="Menlo, monospace" font-size="10" fill="#8b92a8" text-anchor="middle">Confidence: ${info.confidence}%</text>
+  </g>
+
+  <line x1="28" y1="250" x2="532" y2="250" stroke="#1e2235"/>
+  ${statCells}
+  <text x="28" y="318" font-family="Menlo, monospace" font-size="8" fill="#4b5563">${_svgEsc(info.address)}</text>
+  <text x="532" y="318" font-family="Menlo, monospace" font-size="8" fill="#4b5563" text-anchor="end">bloombark terminal · not financial advice</text>
+</svg>`;
+  return 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64');
+}
+
+function _botSend(roomKey, text, imgData = null) {
+  const entry = {
+    id:   Date.now() + Math.random().toString(36).slice(2,6),
+    room: roomKey,
+    wallet: null,
+    displayName: BOT_NAME,
+    avatar: BOT_AVATAR,
+    text,
+    imgData,
+    ts: Date.now(),
+    isBot: true,
+  };
+  db.prepare(`INSERT OR IGNORE INTO chat_messages (id,room,wallet,display_name,avatar,text,img_data,ts)
+    VALUES (?,?,?,?,?,?,?,?)`).run(entry.id, entry.room, entry.wallet, entry.displayName, entry.avatar, entry.text, entry.imgData, entry.ts);
+  broadcastChat(roomKey, { type: 'chat_msg', msg: entry, online: onlineCount() });
+}
+
+async function _chatBotAnalyze(ca, roomKey) {
+  // Cooldown: don't re-analyze the same CA more than once per 2 minutes
+  const last = _botCooldown.get(ca.toLowerCase());
+  if (last && Date.now() - last < CONFIG.chatBotCooldownMs) return;
+  _botCooldown.set(ca.toLowerCase(), Date.now());
+
+  try {
+    // Token data from DexScreener (best pair on a supported chain)
+    const dsRes = await axios.get(`${DEXSCREENER}/latest/dex/tokens/${ca}`, { timeout: 8000 });
+    const pairs = (dsRes.data?.pairs || [])
+      .filter(p => BOT_CHAINS.has(p.chainId))
+      .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+    if (!pairs.length) {
+      _botSend(roomKey, `🔎 I spotted a contract address but couldn't find that token on a supported EVM chain (Ethereum, Base, Arbitrum, Polygon, Optimism, Robinhood).`);
+      return;
+    }
+    const p = pairs[0];
+
+    // AI prediction from our own endpoint
+    let signal = 'NEUTRAL', confidence = 50;
     try {
-      const msg = JSON.parse(raw);
-      if (msg.type === 'subscribe') {
-        const seed = parseFloat(msg.price) || 0.000001;
-        subscribers.set(ws, {
-          contract:  msg.contract,
-          price:     seed,
-          seedPrice: seed,
-          lastReseed: Date.now(),
-        });
-        ws.send(JSON.stringify({ type: 'subscribed', contract: msg.contract }));
+      const pr = await axios.post(`${INTERNAL_API_BASE}/api/predict`,
+        { address: ca, chain: p.chainId }, { timeout: 15000 });
+      if (pr.data?.success !== false && pr.data?.signal) {
+        signal     = String(pr.data.signal).toUpperCase();
+        confidence = Math.round(pr.data.confidence || 50);
       }
     } catch (_) {}
+    if (!['BULLISH', 'BEARISH', 'NEUTRAL'].includes(signal)) signal = 'NEUTRAL';
+
+    const buys  = p.txns?.h24?.buys  || 0;
+    const sells = p.txns?.h24?.sells || 0;
+    const buyRatio = buys + sells > 0 ? Math.round(buys / (buys + sells) * 100) : 50;
+
+    const info = {
+      address:   p.baseToken.address,
+      symbol:    p.baseToken.symbol || '?',
+      name:      p.baseToken.name || '',
+      chain:     p.chainId,
+      price:     parseFloat(p.priceUsd || 0),
+      change24h: parseFloat(p.priceChange?.h24 || 0),
+      marketCap: parseFloat(p.marketCap || p.fdv || 0),
+      liquidity: parseFloat(p.liquidity?.usd || 0),
+      volume24h: parseFloat(p.volume?.h24 || 0),
+      buyRatio, signal, confidence,
+    };
+
+    const sigEmoji = signal === 'BULLISH' ? '🟢' : signal === 'BEARISH' ? '🔴' : '🟡';
+    const chg = (info.change24h >= 0 ? '+' : '') + info.change24h.toFixed(2) + '%';
+    const text =
+      `${sigEmoji} ${info.symbol} (${info.chain.toUpperCase()}) — ${_botFmtPrice(info.price)} (${chg} 24h)\n` +
+      `AI Prediction: ${signal} · ${confidence}% confidence\n` +
+      `MCap ${_botFmtUsd(info.marketCap)} · Liq ${_botFmtUsd(info.liquidity)} · Vol24h ${_botFmtUsd(info.volume24h)} · Buys ${buyRatio}%`;
+
+    _botSend(roomKey, text, _botSvgCard(info));
+  } catch (e) {
+    console.error('[chatbot]', e.message);
+  }
+}
+
+wss.on('connection', (ws) => {
+  ws.on('message', async (raw) => {
+    try {
+      const msg = JSON.parse(raw);
+
+      // ── price subscription ──
+      if (msg.type === 'subscribe') {
+        const seed = parseFloat(msg.price) || 0.000001;
+        subscribers.set(ws, { contract: msg.contract, price: seed, seedPrice: seed, lastReseed: Date.now() });
+        ws.send(JSON.stringify({ type: 'subscribed', contract: msg.contract }));
+        return;
+      }
+
+      // ── chat: join ──
+      if (msg.type === 'chat_join') {
+        const wallet = msg.wallet || null;
+        // Load profile from DB for avatar + saved name
+        const profile = wallet ? db.prepare('SELECT display_name, avatar FROM user_profiles WHERE wallet=?').get(wallet) : null;
+        const displayName = profile?.display_name || msg.displayName || shortAddr(wallet) || 'Anon#' + Math.floor(Math.random() * 9999);
+        const avatar = profile?.avatar || null;
+        chatUsers.set(ws, { wallet, displayName, avatar, joinedAt: Date.now() });
+        // Send history from DB (last 100 per room). Gated rooms only include
+        // history when the user's wallet passes the gate.
+        const history = {};
+        const gates = {};
+        for (const k of Object.keys(chatRooms)) {
+          if (CHANNEL_GATES[k]) {
+            const g = await checkChannelGate(k, wallet);
+            gates[k] = g;
+            if (!g.ok) { history[k] = []; continue; }
+          }
+          const rows = db.prepare('SELECT * FROM chat_messages WHERE room=? ORDER BY ts DESC LIMIT ?').all(k, MAX_CHAT_HISTORY);
+          history[k] = rows.reverse().map(r => ({
+            id: r.id, room: r.room, wallet: r.wallet, displayName: r.display_name,
+            avatar: r.avatar, text: r.text, imgData: r.img_data, ts: r.ts,
+          }));
+        }
+        ws.send(JSON.stringify({ type: 'chat_history', history, gates, online: onlineCount() }));
+        broadcastChat('*', { type: 'chat_online', online: onlineCount() });
+        return;
+      }
+
+      // ── chat: send message ──
+      if (msg.type === 'chat_msg') {
+        const user = chatUsers.get(ws);
+        if (!user) return;
+        const room = chatRooms[msg.room];
+        if (!room) return;
+        // Token-gated channel: verify the user's wallet passes the gate
+        if (CHANNEL_GATES[msg.room]) {
+          const g = await checkChannelGate(msg.room, user.wallet);
+          if (!g.ok) {
+            ws.send(JSON.stringify({ type: 'chat_gate_denied', room: msg.room, minAmount: g.minAmount, symbol: g.symbol, balance: g.balance }));
+            return;
+          }
+        }
+        const text = String(msg.text || '').trim().slice(0, CONFIG.chatMsgMaxLen);
+        const imgData = msg.imgData && typeof msg.imgData === 'string'
+          && msg.imgData.startsWith('data:image/')
+          && msg.imgData.length < 800000
+          ? msg.imgData : null;
+        if (!text && !imgData) return;
+        const entry = {
+          id:   Date.now() + Math.random().toString(36).slice(2,6),
+          room: msg.room,
+          wallet: user.wallet,
+          displayName: user.displayName,
+          avatar: user.avatar || null,
+          text,
+          imgData,
+          ts: Date.now(),
+        };
+        // Persist to DB
+        db.prepare(`INSERT OR IGNORE INTO chat_messages (id,room,wallet,display_name,avatar,text,img_data,ts)
+          VALUES (?,?,?,?,?,?,?,?)`).run(entry.id, entry.room, entry.wallet, entry.displayName, entry.avatar, entry.text, entry.imgData, entry.ts);
+        // Prune old messages per room (keep last CHAT_DB_PRUNE_LIMIT)
+        db.prepare(`DELETE FROM chat_messages WHERE room=? AND id NOT IN
+          (SELECT id FROM chat_messages WHERE room=? ORDER BY ts DESC LIMIT ?)`).run(entry.room, entry.room, CONFIG.chatDbPruneLimit);
+        broadcastChat(msg.room, { type: 'chat_msg', msg: entry, online: onlineCount() });
+
+        // Bot: detect a contract address in the message and auto-analyze it
+        const caMatch = text.match(/0x[a-fA-F0-9]{40}/);
+        if (caMatch) _chatBotAnalyze(caMatch[0], msg.room).catch(() => {});
+        return;
+      }
+
+      // ── chat: set display name ──
+      if (msg.type === 'chat_setname') {
+        const user = chatUsers.get(ws);
+        if (!user) return;
+        const name = String(msg.name || '').trim().slice(0, CONFIG.chatNameMaxLen);
+        if (name) {
+          user.displayName = name;
+          if (user.wallet) db.prepare(`INSERT INTO user_profiles (wallet,display_name,avatar,updated_at) VALUES (?,?,?,strftime('%s','now'))
+            ON CONFLICT(wallet) DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at`).run(user.wallet, name, user.avatar || null);
+        }
+        ws.send(JSON.stringify({ type: 'chat_nameok', displayName: user.displayName }));
+        return;
+      }
+
+    } catch (_) {}
   });
-  ws.on('close', () => subscribers.delete(ws));
+
+  ws.on('close', () => {
+    subscribers.delete(ws);
+    if (chatUsers.has(ws)) {
+      chatUsers.delete(ws);
+      broadcastChat('*', { type: 'chat_online', online: onlineCount() });
+    }
+  });
 });
 
 // Re-seed price from DexScreener every 60s to prevent drift
@@ -2290,22 +2753,22 @@ setInterval(async () => {
       }
     } catch (_) {}
   }
-}, 60000);
+}, CONFIG.priceReseedIntervalMs);
 
-// Tick every 2s — micro movement anchored tightly to seedPrice
+// Tick every PRICE_TICK_INTERVAL_MS — micro movement anchored tightly to seedPrice
 setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     const sub = subscribers.get(ws);
     if (!sub || !sub.seedPrice) return;
 
-    // Mean-revert aggressively: pull 8% toward seed each tick
-    const drift = (sub.seedPrice - sub.price) * 0.08;
-    // Noise: ±0.2% of seed price (tight band, never creates runaway candles)
-    const noise = sub.seedPrice * rand(-0.002, 0.002);
-    // Hard clamp: never go outside ±2% of seedPrice
+    // Mean-revert toward seed each tick, by priceMeanRevertFactor
+    const drift = (sub.seedPrice - sub.price) * CONFIG.priceMeanRevertFactor;
+    // Noise band around seed price (tight, never creates runaway candles)
+    const noise = sub.seedPrice * rand(-CONFIG.priceNoisePct, CONFIG.priceNoisePct);
+    // Hard clamp: never go outside ±priceClampPct of seedPrice
     const raw   = sub.price + drift + noise;
-    sub.price   = Math.max(sub.seedPrice * 0.98, Math.min(raw, sub.seedPrice * 1.02));
+    sub.price   = Math.max(sub.seedPrice * (1 - CONFIG.priceClampPct), Math.min(raw, sub.seedPrice * (1 + CONFIG.priceClampPct)));
 
     const changePct = parseFloat(((sub.price - sub.seedPrice) / sub.seedPrice * 100).toFixed(3));
     const decimals  = sub.price < 0.000001 ? 12 : sub.price < 0.0001 ? 10 : sub.price < 0.01 ? 8 : 6;
@@ -2319,142 +2782,39 @@ setInterval(() => {
       change:    changePct,
     }));
   });
-}, 2000);
+}, CONFIG.priceTickIntervalMs);
 
 // ─── Wallet Tracker ───────────────────────────────────────────────────────────
-const SOL_RPC      = 'https://api.mainnet-beta.solana.com';
-const BLOCKSCOUT   = { ethereum: 'https://eth.blockscout.com', base: 'https://base.blockscout.com', bsc: 'https://bsc.blockscout.com', arbitrum: 'https://arbitrum.blockscout.com' };
+const BLOCKSCOUT = { ethereum: chainCfg('ethereum').blockscout, base: chainCfg('base').blockscout, arbitrum: chainCfg('arbitrum').blockscout, robinhood: chainCfg('robinhood').blockscout };
 
 function detectWalletChain(address) {
   if (/^0x[0-9a-fA-F]{40}$/.test(address)) return 'evm';
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return 'solana';
   return null;
 }
 
-async function getSolanaTokens(address) {
-  const rpc = async (method, params) => {
-    const { data } = await axios.post(SOL_RPC, { jsonrpc:'2.0', id:1, method, params }, { timeout: 10000 });
-    return data.result;
-  };
-
-  // Get SOL balance
-  const solBalance = await rpc('getBalance', [address, { commitment:'confirmed' }]);
-  const solUsd = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112', { timeout:6000 })
-    .then(r => r.data.pairs?.[0]?.priceUsd || 0).catch(() => 0);
-
-  const tokens = [{
-    mint: 'So11111111111111111111111111111111111111112',
-    symbol: 'SOL', name: 'Solana',
-    balance: (solBalance?.value || 0) / 1e9,
-    decimals: 9,
-    priceUsd: parseFloat(solUsd),
-    valueUsd: ((solBalance?.value || 0) / 1e9) * parseFloat(solUsd),
-    logoUri: null,
-  }];
-
-  // Get SPL token accounts
-  const accounts = await rpc('getTokenAccountsByOwner', [
-    address,
-    { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
-    { encoding: 'jsonParsed', commitment: 'confirmed' },
-  ]);
-
-  const mints = (accounts?.value || [])
-    .map(a => ({ mint: a.account.data.parsed.info.mint, balance: a.account.data.parsed.info.tokenAmount }))
-    .filter(t => parseFloat(t.balance.uiAmount) > 0);
-
-  // Fetch prices from DexScreener in batches of 30
-  const batches = [];
-  for (let i = 0; i < mints.length; i += 30) batches.push(mints.slice(i, i + 30));
-
-  for (const batch of batches.slice(0, 3)) { // max 3 batches = 90 tokens
-    const mintIds = batch.map(t => t.mint).join(',');
-    const prices = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mintIds}`, { timeout:8000 })
-      .then(r => r.data.pairs || []).catch(() => []);
-
-    // Map mint → best price pair (highest volume)
-    const priceMap = {};
-    prices.forEach(p => {
-      const mint = p.baseToken?.address;
-      if (!mint) return;
-      if (!priceMap[mint] || (p.volume?.h24 || 0) > (priceMap[mint].vol || 0)) {
-        priceMap[mint] = { price: parseFloat(p.priceUsd || 0), vol: p.volume?.h24 || 0, symbol: p.baseToken.symbol, name: p.baseToken.name };
-      }
-    });
-
-    batch.forEach(t => {
-      const bal = parseFloat(t.balance.uiAmount);
-      const info = priceMap[t.mint] || {};
-      const price = info.price || 0;
-      tokens.push({
-        mint: t.mint,
-        symbol: info.symbol || t.mint.slice(0,6),
-        name: info.name || 'Unknown',
-        balance: bal,
-        decimals: t.balance.decimals,
-        priceUsd: price,
-        valueUsd: bal * price,
-        logoUri: null,
-      });
-    });
+// Resolve a token's USD price from DexScreener pairs, matching the right chain
+// and the right side of the pair (priceUsd only refers to the BASE token).
+// Scam clones on new chains mint themselves fake "liquidity" (even $Bs worth)
+// with a misleading symbol like USDT/TAO but ~$0 real trading — so liquidity
+// alone doesn't work as a spam filter. Require actual 24h trading volume instead.
+const MIN_VOLUME_USD = CONFIG.minVolumeUsdFilter;
+function _dsPriceFromPairs(pairs, tokenAddr, chainKey) {
+  const addr = (tokenAddr || '').toLowerCase();
+  const onChain = (pairs || [])
+    .filter(p => p.chainId === chainKey && (p.volume?.h24 || 0) >= MIN_VOLUME_USD)
+    .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+  for (const p of onChain) {
+    if (p.baseToken?.address?.toLowerCase() === addr) {
+      return parseFloat(p.priceUsd || 0);
+    }
+    // Token is the QUOTE side: quote price = basePriceUsd / priceNative
+    if (p.quoteToken?.address?.toLowerCase() === addr) {
+      const baseUsd = parseFloat(p.priceUsd || 0);
+      const native  = parseFloat(p.priceNative || 0);
+      if (baseUsd > 0 && native > 0) return baseUsd / native;
+    }
   }
-
-  return tokens.filter(t => t.valueUsd > 0.01 || t.symbol === 'SOL').sort((a,b) => b.valueUsd - a.valueUsd);
-}
-
-async function getSolanaTransactions(address, limit = 40, before = null) {
-  const rpc = async (method, params) => {
-    const { data } = await axios.post(SOL_RPC, { jsonrpc:'2.0', id:1, method, params }, { timeout:10000 });
-    return data.result;
-  };
-
-  const sigOpts = { limit, commitment:'confirmed' };
-  if (before) sigOpts.before = before;
-  const sigs = await rpc('getSignaturesForAddress', [address, sigOpts]);
-  if (!sigs?.length) return [];
-
-  // Keep last signature as cursor for next page (even if some detail fetches fail)
-  const lastSig = sigs[sigs.length - 1]?.signature || null;
-
-  const txs = [];
-  // Fetch in parallel batches of 5
-  for (let i = 0; i < Math.min(sigs.length, 20); i += 5) {
-    const batch = sigs.slice(i, i+5);
-    const results = await Promise.all(batch.map(s =>
-      rpc('getTransaction', [s.signature, { encoding:'jsonParsed', commitment:'confirmed', maxSupportedTransactionVersion:0 }]).catch(() => null)
-    ));
-    results.forEach((tx, j) => {
-      if (!tx) return;
-      const sig    = batch[j].signature;
-      const status = batch[j].err ? 'failed' : 'success';
-      const ts     = tx.blockTime ? tx.blockTime * 1000 : Date.now();
-      const fee    = (tx.meta?.fee || 0) / 1e9;
-
-      // Parse pre/post token balances to detect swaps
-      const pre  = tx.meta?.preTokenBalances  || [];
-      const post = tx.meta?.postTokenBalances || [];
-      let type = 'Transfer', tokenIn = null, tokenOut = null, amtIn = 0, amtOut = 0;
-
-      pre.forEach(p => {
-        const po = post.find(pp => pp.accountIndex === p.accountIndex);
-        if (!po) return;
-        const diff = parseFloat(po.uiTokenAmount?.uiAmount || 0) - parseFloat(p.uiTokenAmount?.uiAmount || 0);
-        if (p.owner === address) {
-          if (diff < 0) { tokenOut = p.mint; amtOut = Math.abs(diff); }
-          if (diff > 0) { tokenIn  = p.mint; amtIn  = diff; }
-        }
-      });
-
-      if (tokenIn || tokenOut) type = tokenIn && tokenOut ? 'Swap' : tokenIn ? 'Receive' : 'Send';
-
-      txs.push({ signature: sig, type, status, timestamp: ts, fee,
-        tokenIn, tokenOut, amtIn, amtOut,
-        short: sig.slice(0,8)+'…'+sig.slice(-6) });
-    });
-  }
-  // Attach cursor to array so caller can use it
-  txs._nextCursor = sigs.length >= limit ? lastSig : null;
-  return txs;
+  return 0;
 }
 
 async function getEvmData(address, chainKey = 'ethereum') {
@@ -2468,29 +2828,62 @@ async function getEvmData(address, chainKey = 'ethereum') {
 
   const tokens = [];
 
-  // Native balance (ETH/BNB)
+  // Native balance (ETH/MATIC) — priced via the canonical wrapped-native token
   const nativeBal = parseFloat(ethRes?.data?.coin_balance || 0) / 1e18;
-  const nativeSymbol = { ethereum:'ETH', base:'ETH', bsc:'BNB', arbitrum:'ETH' }[chainKey] || 'ETH';
-  const nativeMint   = { ethereum:'0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', base:'0x4200000000000000000000000000000000000006', bsc:'0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', arbitrum:'0x82aF49447D8a07e3bd95BD0d56f35241523fBab1' }[chainKey];
+  const nativeSymbol = { ethereum:'ETH', base:'ETH', arbitrum:'ETH', robinhood:'ETH' }[chainKey] || 'ETH';
+  const nativeMint   = {
+    ethereum:  '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH
+    base:      '0x4200000000000000000000000000000000000006', // WETH Base
+    arbitrum:  '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', // WETH Arbitrum
+    robinhood: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', // WETH Robinhood
+  }[chainKey];
 
   if (nativeBal > 0) {
-    const nativePrice = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${nativeMint}`, { timeout:6000 })
-      .then(r => parseFloat(r.data.pairs?.[0]?.priceUsd || 0)).catch(() => 0);
+    // Native price: Blockscout stats first, DexScreener WETH pair as fallback
+    let nativePrice = await axios.get(`${base}/api/v2/stats`, { timeout:6000 })
+      .then(r => parseFloat(r.data?.coin_price || 0)).catch(() => 0);
+    if (!nativePrice && nativeMint) {
+      nativePrice = await axios.get(`${DEXSCREENER}/latest/dex/tokens/${nativeMint}`, { timeout:6000 })
+        .then(r => _dsPriceFromPairs(r.data.pairs, nativeMint, chainKey)).catch(() => 0);
+    }
     tokens.push({ symbol: nativeSymbol, name: nativeSymbol, balance: nativeBal, decimals: 18, priceUsd: nativePrice, valueUsd: nativeBal * nativePrice, address: nativeMint });
   }
 
-  // ERC20 tokens
+  // ERC20 tokens — note: Blockscout v2 uses `address_hash` for the token address.
+  // Pricing: on established chains Blockscout's exchange_rate is reliable; on
+  // Robinhood Chain spam airdrops clone real symbols and inherit bogus rates,
+  // so there we only trust DexScreener (spam has no real liquidity pool there).
+  const trustExchangeRate = chainKey !== 'robinhood';
   const rawTokens = tokenRes?.data || [];
-  const erc20 = Array.isArray(rawTokens) ? rawTokens : (rawTokens.items || []);
-  for (const t of erc20.slice(0, 50)) {
+  const allErc20 = (Array.isArray(rawTokens) ? rawTokens : (rawTokens.items || []))
+    .map(t => ({ ...t, _addr: t.token?.address_hash || t.token?.address || null }))
+    .filter(t => t._addr && parseFloat(t.value || 0) > 0 && t.token?.type === 'ERC-20');
+  // Most-held tokens first (real tokens have many holders, spam clones few), cap at 90
+  allErc20.sort((a, b) => parseInt(b.token?.holders_count || 0) - parseInt(a.token?.holders_count || 0));
+  const erc20 = allErc20.slice(0, CONFIG.walletMaxTokens);
+
+  // DexScreener batch lookup for anything without a trusted exchange_rate
+  const unpriced = erc20.filter(t => !(trustExchangeRate && parseFloat(t.token?.exchange_rate || 0) > 0));
+  const priceMap = {};
+  for (let i = 0; i < Math.min(unpriced.length, 90); i += 30) {
+    const batch = unpriced.slice(i, i + 30);
+    const ids = batch.map(t => t._addr).join(',');
+    const pairs = await axios.get(`${DEXSCREENER}/latest/dex/tokens/${ids}`, { timeout:8000 })
+      .then(r => r.data.pairs || []).catch(() => []);
+    for (const t of batch) {
+      priceMap[t._addr.toLowerCase()] = _dsPriceFromPairs(pairs, t._addr, chainKey);
+    }
+  }
+
+  for (const t of erc20) {
     const bal = parseFloat(t.value || 0) / Math.pow(10, parseInt(t.token?.decimals || 18));
     if (bal <= 0) continue;
-    const price = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${t.token?.address}`, { timeout:5000 })
-      .then(r => parseFloat(r.data.pairs?.[0]?.priceUsd || 0)).catch(() => 0);
+    const trusted = trustExchangeRate ? parseFloat(t.token?.exchange_rate || 0) : 0;
+    const price = trusted || priceMap[t._addr.toLowerCase()] || 0;
     tokens.push({
       symbol: t.token?.symbol || '?', name: t.token?.name || 'Unknown',
       balance: bal, decimals: parseInt(t.token?.decimals || 18),
-      priceUsd: price, valueUsd: bal * price, address: t.token?.address,
+      priceUsd: price, valueUsd: bal * price, address: t._addr,
     });
   }
 
@@ -2513,37 +2906,168 @@ async function getEvmData(address, chainKey = 'ethereum') {
   return { tokens: tokens.sort((a,b) => b.valueUsd - a.valueUsd), txs };
 }
 
-const _walletTxCache = new Map();
+// ─── AI Price Prediction (rule-based, no external AI API) ────────────────────
+app.post('/api/predict', async (req, res) => {
+  const { address, chain } = req.body;
+  if (!address) return res.json({ success: false, error: 'Address required' });
+
+  try {
+    // Fetch token data from DexScreener
+    const dsRes = await axios.get(`${DEXSCREENER}/latest/dex/tokens/${address}`, { timeout: 8000 }).catch(() => null);
+    const pairs  = dsRes?.data?.pairs || [];
+    const pair   = pairs.sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0))[0];
+
+    if (!pair) return res.json({ success: false, error: 'Token not found on DexScreener' });
+
+    const p1h  = parseFloat(pair.priceChange?.h1  || 0);
+    const p6h  = parseFloat(pair.priceChange?.h6  || 0);
+    const p24h = parseFloat(pair.priceChange?.h24 || 0);
+    const vol24h = pair.volume?.h24 || 0;
+    const vol6h  = pair.volume?.h6  || 0;
+    const buys24  = pair.txns?.h24?.buys  || 0;
+    const sells24 = pair.txns?.h24?.sells || 0;
+    const liqUsd  = pair.liquidity?.usd   || 0;
+    const fdv     = pair.fdv || pair.marketCap || 0;
+
+    // GoPlus security check
+    const gpChain = GOPLUS_CHAIN[chain] || GOPLUS_CHAIN['ethereum'];
+    const gpRes = await axios.get(`https://api.gopluslabs.io/api/v1/token_security/${gpChain}?contract_addresses=${address}`, { timeout: 6000 }).catch(() => null);
+    const gp = gpRes?.data?.result?.[address.toLowerCase()] || {};
+    const isHoneypot    = gp.is_honeypot === '1';
+    const holderCount   = parseInt(gp.holder_count || 0);
+    const top10Pct      = parseFloat(gp.top10_holder_rate || 0) * 100;
+    const creatorPct    = parseFloat(gp.creator_percent || 0) * 100;
+    const isMintable    = gp.is_mintable === '1';
+    const lpLocked      = gp.lp_locked_ratio != null ? parseFloat(gp.lp_locked_ratio) * 100 : null;
+
+    // ── Scoring engine ──────────────────────────────────────────
+    const signals = [];
+    let bullScore = 0;
+    let bearScore = 0;
+
+    // 1. Price momentum
+    const momentum = (p1h * 0.5) + (p6h * 0.3) + (p24h * 0.2);
+    if (momentum > 5) {
+      bullScore += 25;
+      signals.push({ label: 'Price Momentum', verdict: 'bullish', detail: `+${p1h.toFixed(1)}% (1h) · +${p6h.toFixed(1)}% (6h) · +${p24h.toFixed(1)}% (24h)` });
+    } else if (momentum < -5) {
+      bearScore += 25;
+      signals.push({ label: 'Price Momentum', verdict: 'bearish', detail: `${p1h.toFixed(1)}% (1h) · ${p6h.toFixed(1)}% (6h) · ${p24h.toFixed(1)}% (24h)` });
+    } else {
+      signals.push({ label: 'Price Momentum', verdict: 'neutral', detail: `${p1h.toFixed(1)}% (1h) · ${p6h.toFixed(1)}% (6h) · ${p24h.toFixed(1)}% (24h)` });
+    }
+
+    // 2. Buy/sell pressure
+    const total = buys24 + sells24;
+    const buyRatio = total > 0 ? buys24 / total : 0.5;
+    if (buyRatio > 0.6) {
+      bullScore += 20;
+      signals.push({ label: 'Buy/Sell Pressure', verdict: 'bullish', detail: `${(buyRatio*100).toFixed(0)}% buys vs ${((1-buyRatio)*100).toFixed(0)}% sells (${total} txns)` });
+    } else if (buyRatio < 0.4) {
+      bearScore += 20;
+      signals.push({ label: 'Buy/Sell Pressure', verdict: 'bearish', detail: `${(buyRatio*100).toFixed(0)}% buys vs ${((1-buyRatio)*100).toFixed(0)}% sells (${total} txns)` });
+    } else {
+      signals.push({ label: 'Buy/Sell Pressure', verdict: 'neutral', detail: `${(buyRatio*100).toFixed(0)}% buys · ${total} txns 24h` });
+    }
+
+    // 3. Volume trend (6h vs 24h/4 — if 6h pace > 24h avg, volume accelerating)
+    const vol6hPace = vol6h * 4;
+    if (vol24h > 0) {
+      const volAccel = vol6hPace / vol24h;
+      if (volAccel > 1.3) {
+        bullScore += 20;
+        signals.push({ label: 'Volume Trend', verdict: 'bullish', detail: `Accelerating — 6h pace $${(vol6hPace/1000).toFixed(1)}K vs 24h avg $${(vol24h/1000).toFixed(1)}K` });
+      } else if (volAccel < 0.7) {
+        bearScore += 20;
+        signals.push({ label: 'Volume Trend', verdict: 'bearish', detail: `Declining — 6h pace $${(vol6hPace/1000).toFixed(1)}K vs 24h avg $${(vol24h/1000).toFixed(1)}K` });
+      } else {
+        signals.push({ label: 'Volume Trend', verdict: 'neutral', detail: `Stable — $${(vol24h/1000).toFixed(1)}K 24h volume` });
+      }
+    }
+
+    // 4. Liquidity health
+    const liqToVol = vol24h > 0 ? liqUsd / vol24h : 0;
+    if (liqUsd > 100000 && liqToVol > 0.1) {
+      bullScore += 10;
+      signals.push({ label: 'Liquidity', verdict: 'bullish', detail: `$${(liqUsd/1000).toFixed(1)}K — healthy depth` });
+    } else if (liqUsd < 10000) {
+      bearScore += 15;
+      signals.push({ label: 'Liquidity', verdict: 'bearish', detail: `$${(liqUsd/1000).toFixed(1)}K — very low, high slippage risk` });
+    } else {
+      signals.push({ label: 'Liquidity', verdict: 'neutral', detail: `$${(liqUsd/1000).toFixed(1)}K` });
+    }
+
+    // 5. Holder concentration (from GoPlus)
+    if (holderCount > 0) {
+      if (top10Pct < 30 && creatorPct < 5) {
+        bullScore += 15;
+        signals.push({ label: 'Holder Distribution', verdict: 'bullish', detail: `Top 10 hold ${top10Pct.toFixed(1)}% · Creator ${creatorPct.toFixed(1)}% — well distributed` });
+      } else if (top10Pct > 60 || creatorPct > 20) {
+        bearScore += 20;
+        signals.push({ label: 'Holder Distribution', verdict: 'bearish', detail: `Top 10 hold ${top10Pct.toFixed(1)}% · Creator ${creatorPct.toFixed(1)}% — high concentration risk` });
+      } else {
+        signals.push({ label: 'Holder Distribution', verdict: 'neutral', detail: `Top 10: ${top10Pct.toFixed(1)}% · ${holderCount.toLocaleString()} holders` });
+      }
+    }
+
+    // 6. Security flags
+    if (isHoneypot) {
+      bearScore += 30;
+      signals.push({ label: 'Security', verdict: 'bearish', detail: '⚠ HONEYPOT detected — cannot sell' });
+    } else if (isMintable) {
+      bearScore += 10;
+      signals.push({ label: 'Security', verdict: 'bearish', detail: 'Token is mintable — inflation risk' });
+    } else if (lpLocked !== null && lpLocked > 80) {
+      bullScore += 10;
+      signals.push({ label: 'Security', verdict: 'bullish', detail: `LP ${lpLocked.toFixed(0)}% locked — lower rug risk` });
+    } else {
+      signals.push({ label: 'Security', verdict: 'neutral', detail: 'No critical security issues detected' });
+    }
+
+    // ── Final verdict ──
+    const net = bullScore - bearScore;
+    let verdict, signal;
+    if (net >= 20)       { verdict = 'BULLISH';  signal = 'bullish'; }
+    else if (net <= -20) { verdict = 'BEARISH';  signal = 'bearish'; }
+    else                 { verdict = 'NEUTRAL';  signal = 'neutral'; }
+
+    const total_weight = bullScore + bearScore || 1;
+    const confidence = Math.min(95, Math.round(Math.abs(net) / total_weight * 100 + 30));
+
+    const summary = signal === 'bullish'
+      ? `Majority of signals point upward. Buy pressure dominates with ${(buyRatio*100).toFixed(0)}% buys, price momentum ${momentum > 0 ? 'positive' : 'mixed'} across timeframes.`
+      : signal === 'bearish'
+      ? `Multiple bearish signals detected. Sell pressure elevated at ${((1-buyRatio)*100).toFixed(0)}% of transactions. Exercise caution.`
+      : `Mixed signals — market is consolidating. No clear directional bias. Wait for a stronger signal before entering.`;
+
+    res.json({
+      success: true,
+      symbol: pair.baseToken?.symbol,
+      name:   pair.baseToken?.name,
+      price:  pair.priceUsd,
+      verdict, signal, confidence, summary, signals,
+      bullScore, bearScore,
+      timeframe: 'Short-term (1–24h)',
+      generatedAt: new Date().toISOString(),
+    });
+
+  } catch (e) {
+    console.error('[predict]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
 app.post('/api/wallet-tracker', async (req, res) => {
   const { address, evmChain = 'ethereum', before = null } = req.body;
   if (!address) return res.json({ success: false, error: 'Address required' });
 
   const chain = detectWalletChain(address);
-  if (!chain) return res.json({ success: false, error: 'Invalid address format' });
+  if (!chain) return res.json({ success: false, error: 'Invalid address format. Only EVM wallets (0x…) are supported.' });
 
   try {
-    if (chain === 'solana') {
-      // Cache tx pages by address+cursor (5 min TTL)
-      const cacheKey = `${address}:${before || 'first'}`;
-      const cached = _walletTxCache.get(cacheKey);
-      if (cached && Date.now() - cached.ts < 300000) {
-        return res.json(cached.val);
-      }
-
-      const fetchFns = before
-        ? [Promise.resolve(null), getSolanaTransactions(address, 20, before)]
-        : [getSolanaTokens(address), getSolanaTransactions(address, 20)];
-      const [tokens, txs] = await Promise.all(fetchFns);
-      const totalUsd = (tokens || []).reduce((s, t) => s + t.valueUsd, 0);
-      const nextCursor = txs._nextCursor || null;
-      const payload = { success: true, chain: 'solana', address, totalUsd, tokens: tokens || [], txs, nextCursor };
-      _walletTxCache.set(cacheKey, { val: payload, ts: Date.now() });
-      return res.json(payload);
-    } else {
-      const { tokens, txs } = await getEvmData(address, evmChain);
-      const totalUsd = tokens.reduce((s, t) => s + t.valueUsd, 0);
-      return res.json({ success: true, chain: 'evm', evmChain, address, totalUsd, tokens, txs, nextCursor: null });
-    }
+    const { tokens, txs } = await getEvmData(address, evmChain);
+    const totalUsd = tokens.reduce((s, t) => s + t.valueUsd, 0);
+    return res.json({ success: true, chain: 'evm', evmChain, address, totalUsd, tokens, txs, nextCursor: null });
   } catch (e) {
     console.error('[wallet-tracker]', e.message);
     res.json({ success: false, error: e.message });
@@ -2613,7 +3137,7 @@ app.post('/api/auth/login', async (req, res) => {
     const displayAddress = isEmail ? user.generated_address : walletLower;
 
     // Issue JWT (7 days)
-    const expiresIn = 7 * 24 * 3600;
+    const expiresIn = CONFIG.jwtExpiresInSec;
     const token = jwt.sign(
       { wallet: walletLower, userId: user.id, privyUserId: privyUserId || null },
       JWT_SECRET,
@@ -2704,20 +3228,20 @@ const _walletMapCache = new Map();
 function _wmc(key, val) {
   if (val !== undefined) { _walletMapCache.set(key, { val, ts: Date.now() }); return val; }
   const e = _walletMapCache.get(key);
-  return e && Date.now() - e.ts < 300000 ? e.val : null;
+  return e && Date.now() - e.ts < CONFIG.walletMapCacheTtlMs ? e.val : null;
 }
 
 // ─── Wallet Relationship Map — real data from GoPlus + DexScreener ────────────
 app.get('/api/wallet-map/:address', async (req, res) => {
   const { address } = req.params;
-  const chain = (req.query.chain || 'solana').toLowerCase();
+  const chain = (req.query.chain || 'ethereum').toLowerCase();
   try {
     const holders = [];
 
     // 1. Fetch GoPlus for creator + LP holder addresses
     const [goplusRaw, dexRaw] = await Promise.allSettled([
       fetchGoPlus(address, chain),
-      axios.get(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { timeout: 8000 }).then(r => r.data),
+      axios.get(`${DEXSCREENER}/latest/dex/tokens/${address}`, { timeout: 8000 }).then(r => r.data),
     ]);
     const gp  = goplusRaw.status === 'fulfilled' ? goplusRaw.value : null;
     const dex = dexRaw.status === 'fulfilled' ? dexRaw.value : null;
@@ -2802,67 +3326,6 @@ app.get('/api/wallet-map/:address', async (req, res) => {
       });
     }
 
-    // 4b. Solana: add real traders (from cache or fresh RPC fetch)
-    if (chain === 'solana' && pairs.length > 0) {
-      const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
-      const poolAddrs = pairs.map(p => p.pairAddress).filter(Boolean);
-
-      // Use cached trader data from /api/analyze if available
-      let cachedTraders = _wmc(`sol-traders:${address}`);
-      let sortedTraders = [];
-
-      if (cachedTraders?.length) {
-        sortedTraders = cachedTraders.map((h, i) => [h.address, h.txCount7d || 1]);
-      } else {
-        // Fresh fetch from Solana RPC
-        const traderTxCount = {};
-        await Promise.allSettled(poolAddrs.slice(0, 3).map(async (poolAddr) => {
-          try {
-            const sigRes = await axios.post(SOLANA_RPC, {
-              jsonrpc: '2.0', id: 1, method: 'getSignaturesForAddress',
-              params: [poolAddr, { limit: 40 }],
-            }, { timeout: 6000 });
-            const sigs = sigRes.data?.result || [];
-            const txResults = await Promise.allSettled(
-              sigs.slice(0, 15).map(s =>
-                axios.post(SOLANA_RPC, {
-                  jsonrpc: '2.0', id: 1, method: 'getTransaction',
-                  params: [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
-                }, { timeout: 4000 }).then(r => r.data?.result)
-              )
-            );
-            for (const tx of txResults) {
-              if (tx.status !== 'fulfilled' || !tx.value) continue;
-              const keys = tx.value?.transaction?.message?.accountKeys || [];
-              for (const k of keys.slice(0, 2)) {
-                const pub = typeof k === 'string' ? k : k.pubkey;
-                if (!pub || poolAddrs.includes(pub)) continue;
-                traderTxCount[pub] = (traderTxCount[pub] || 0) + 1;
-              }
-            }
-          } catch (_) {}
-        }));
-        sortedTraders = Object.entries(traderTxCount).sort((a, b) => b[1] - a[1]);
-        // Cache for next call
-        if (sortedTraders.length) _wmc(`sol-traders:${address}`, sortedTraders.map(([addr, count], i) => ({ address: addr, txCount7d: count })));
-      }
-
-      const existingAddrs = new Set(holders.map(h => h.address.toLowerCase()));
-      sortedTraders.slice(0, 15).forEach(([addr, count], i) => {
-        if (!addr || existingAddrs.has(addr.toLowerCase())) return;
-        existingAddrs.add(addr.toLowerCase());
-        const type = i < 3 ? 'Whale' : i < 8 ? 'Top Holder' : 'Holder';
-        holders.push({
-          address:    addr,
-          shortAddr:  addr.slice(0,6) + '…' + addr.slice(-4),
-          type,
-          supplyPct:  parseFloat((8 * Math.pow(0.72, i)).toFixed(2)),
-          riskScore:  type === 'Whale' ? 75 : type === 'Top Holder' ? 50 : 30,
-          isRealData: true,
-          tag:        `${count} txns`,
-        });
-      });
-    }
 
     // 4c. Insider wallets detection
     const insiderSet = new Set(holders.map(h => h.address.toLowerCase()));
@@ -2884,7 +3347,7 @@ app.get('/api/wallet-map/:address', async (req, res) => {
     });
 
     // Source 2: Solana RPC — repeat signers across recent pool txns = bots/insiders
-    if (chain === 'solana') {
+    if (false && chain === 'solana') { // Solana no longer supported — branch disabled, EVM path below always runs
       const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
       const poolAddresses = pairs.slice(0, 3).map(p => p.pairAddress).filter(Boolean);
 
@@ -2976,7 +3439,7 @@ app.get('/api/wallet-map/:address', async (req, res) => {
     const poolNodes = holders.filter(h => h.type?.includes('Pool') || h.type?.includes('LP'));
     const specialNodes = holders.filter(h => h.type === 'Creator' || h.type === 'Owner');
 
-    if (chain === 'solana') {
+    if (false && chain === 'solana') { // Solana no longer supported — branch disabled, EVM path below always runs
       // Solana: use public RPC to get recent transactions for each pool account
       // Extract signers (wallet addresses) from each transaction
       const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
@@ -3149,11 +3612,159 @@ app.get('/api/wallet-map/:address', async (req, res) => {
   }
 });
 
+// ─── User profile endpoints ──────────────────────────────────────────────────
+app.get('/api/profile/:wallet', (req, res) => {
+  const row = db.prepare('SELECT wallet, display_name, avatar FROM user_profiles WHERE wallet=?').get(req.params.wallet);
+  if (!row) return res.json({ found: false });
+  res.json({ found: true, displayName: row.display_name, avatar: row.avatar });
+});
+
+app.post('/api/profile', express.json({ limit: '8mb' }), (req, res) => {
+  const { wallet, displayName, avatar } = req.body || {};
+  if (!wallet) return res.status(400).json({ error: 'wallet required' });
+  if (avatar && avatar.length > 7 * 1024 * 1024) return res.status(400).json({ error: 'avatar too large' });
+  db.prepare(`
+    INSERT INTO user_profiles (wallet, display_name, avatar, updated_at)
+    VALUES (?, ?, ?, strftime('%s','now'))
+    ON CONFLICT(wallet) DO UPDATE SET
+      display_name = excluded.display_name,
+      avatar       = excluded.avatar,
+      updated_at   = excluded.updated_at
+  `).run(wallet, displayName || null, avatar || null);
+  res.json({ ok: true });
+});
+
 // ─── Public config endpoint ─────────────────────────────────────────────────
 app.get('/api/config/public', (req, res) => {
   const ca = db.prepare("SELECT value FROM app_config WHERE key='contract_address'").get();
-  res.json({ contractAddress: ca?.value || 'coming_soon' });
+  res.json({
+    contractAddress: ca?.value || 'coming_soon',
+    networkEnv: NETWORK_ENV,
+    isTestnet: IS_TESTNET,
+    chains: Object.fromEntries(Object.keys(CHAIN_NETWORKS).map(k => [k, chainCfg(k)])),
+  });
 });
 
-const PORT = process.env.PORT || 3001;
+// ─── Trading proxy (KyberSwap aggregator, EVM only) ─────────────────────────
+// Note: KyberSwap does not index testnet liquidity — quotes/swaps will return
+// no route in testnet mode. This mapping is left as mainnet-only slugs.
+const KYBER_CHAINS = { ethereum:'ethereum', base:'base', arbitrum:'arbitrum', polygon:'polygon', optimism:'optimism', avalanche:'avalanche', robinhood:'robinhood' };
+const RPC_URLS = Object.fromEntries(Object.keys(CHAIN_NETWORKS).map(k => [k, chainCfg(k).rpc]));
+
+// Get best swap route
+app.get('/api/trade/kyber/route', async (req, res) => {
+  try {
+    const { chain, tokenIn, tokenOut, amountIn } = req.query;
+    const kc = KYBER_CHAINS[chain];
+    if (!kc) return res.status(400).json({ error: `Unsupported chain: ${chain}` });
+    if (!tokenIn || !tokenOut || !amountIn) return res.status(400).json({ error: 'missing params' });
+    const r = await axios.get(`https://aggregator-api.kyberswap.com/${kc}/api/v1/routes`, {
+      params: { tokenIn, tokenOut, amountIn, gasInclude: true },
+      headers: { 'x-client-id': 'bloombark' }, timeout: 10000,
+    });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+// Build swap transaction calldata
+app.post('/api/trade/kyber/build', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const { chain, routeSummary, sender, slippageBps } = req.body || {};
+    const kc = KYBER_CHAINS[chain];
+    if (!kc || !routeSummary || !sender) return res.status(400).json({ error: 'missing params' });
+    const r = await axios.post(`https://aggregator-api.kyberswap.com/${kc}/api/v1/route/build`, {
+      routeSummary,
+      sender,
+      recipient: sender,
+      slippageTolerance: Math.min(Math.max(parseInt(slippageBps) || 100, 5), 2000),
+      source: 'bloombark',
+    }, { headers: { 'x-client-id': 'bloombark' }, timeout: 10000 });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+// JSON-RPC proxy to public nodes (decimals, balance, allowance reads)
+app.post('/api/trade/rpc/:chain', express.json({ limit: '100kb' }), async (req, res) => {
+  try {
+    const url = RPC_URLS[req.params.chain];
+    if (!url) return res.status(400).json({ error: 'unsupported chain' });
+    const r = await axios.post(url, req.body, { timeout: 10000 });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ─── Wallet holdings (via Blockscout instances, no API key needed) ───────────
+const BLOCKSCOUT_URLS = Object.fromEntries(Object.keys(CHAIN_NETWORKS).map(k => [k, chainCfg(k).blockscout]));
+const NATIVE_SYMBOLS = { ethereum:'ETH', base:'ETH', arbitrum:'ETH', optimism:'ETH', polygon:'MATIC', robinhood:'ETH' };
+
+const _holdingsCache = new Map(); // wallet -> { ts, data }
+app.get('/api/trade/holdings/:wallet', async (req, res) => {
+  const wallet = req.params.wallet;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return res.status(400).json({ error: 'invalid address' });
+
+  const cached = _holdingsCache.get(wallet.toLowerCase());
+  if (cached && Date.now() - cached.ts < CONFIG.holdingsCacheTtlMs) return res.json({ holdings: cached.data, cached: true });
+
+  const holdings = [];
+  await Promise.allSettled(Object.entries(BLOCKSCOUT_URLS).map(async ([chain, base]) => {
+    // ERC-20 balances
+    try {
+      const r = await axios.get(`${base}/api/v2/addresses/${wallet}/token-balances`, { timeout: 8000, maxRedirects: 3 });
+      for (const t of (r.data || [])) {
+        const tok = t.token || {};
+        if (tok.type !== 'ERC-20' || !tok.decimals) continue;
+        const bal = Number(t.value) / Math.pow(10, parseInt(tok.decimals));
+        const usd = tok.exchange_rate ? bal * parseFloat(tok.exchange_rate) : null;
+        if (bal <= 0) continue;
+        if (usd !== null && usd < CONFIG.holdingsDustUsd) continue; // dust
+        holdings.push({ chain, address: tok.address_hash || tok.address, symbol: tok.symbol || '?', name: tok.name || '', balance: bal, usd, icon: tok.icon_url || null, native: false });
+      }
+    } catch (_) {}
+    // Native balance + price
+    try {
+      const [balR, statsR] = await Promise.all([
+        axios.get(`${base}/api/v2/addresses/${wallet}`, { timeout: 8000, maxRedirects: 3 }),
+        axios.get(`${base}/api/v2/stats`, { timeout: 8000, maxRedirects: 3 }),
+      ]);
+      const bal = Number(balR.data?.coin_balance || 0) / 1e18;
+      const price = parseFloat(statsR.data?.coin_price || 0);
+      if (bal > 0) holdings.push({ chain, address: null, symbol: NATIVE_SYMBOLS[chain], name: 'Native', balance: bal, usd: price ? bal * price : null, icon: null, native: true });
+    } catch (_) {}
+  }));
+
+  holdings.sort((a, b) => (b.usd || 0) - (a.usd || 0));
+  const top = holdings.slice(0, CONFIG.holdingsMaxResults);
+  _holdingsCache.set(wallet.toLowerCase(), { ts: Date.now(), data: top });
+  res.json({ holdings: top });
+});
+
+// ─── Legacy trading proxy (0x, EVM-only backup) ─────────────────────────────
+
+// 0x quote (EVM)
+const ZEROx_API_KEY = process.env.ZEROx_API_KEY || '';
+const ZEROx_CHAIN_SUBDOMAIN = { '1':'', '8453':'base.', '42161':'arbitrum.', '137':'polygon.', '10':'optimism.' };
+app.get('/api/trade/quote/evm', async (req, res) => {
+  try {
+    const { chainId = '1', sellToken, buyToken, sellAmount, slippagePercentage = '0.01', takerAddress } = req.query;
+    if (!sellToken || !buyToken || !sellAmount) return res.status(400).json({ error: 'missing params' });
+    const sub = ZEROx_CHAIN_SUBDOMAIN[chainId] ?? '';
+    const params = new URLSearchParams({ sellToken, buyToken, sellAmount, slippagePercentage });
+    if (takerAddress) params.set('takerAddress', takerAddress);
+    const url = `https://${sub}api.0x.org/swap/v1/quote?${params}`;
+    const r = await axios.get(url, {
+      headers: ZEROx_API_KEY ? { '0x-api-key': ZEROx_API_KEY } : {},
+      timeout: 8000
+    });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.response?.data?.error || e.message });
+  }
+});
+
 server.listen(PORT, () => console.log(`Bloombark Terminal Backend running on port ${PORT}`));

@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="css/main.css" />
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="js/privy-bundle.js?v=d6731024"></script>
+
 </head>
 <body>
   <div class="app">
@@ -38,6 +38,10 @@
           <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           AI Analyzer
         </a>
+        <a href="#" class="nav-item" data-page="trade">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>
+          Trade
+        </a>
         <a href="#" class="nav-item" data-page="dashboard">
           <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
           Market Overview
@@ -57,6 +61,11 @@
         <a href="#" class="nav-item" data-page="narrative">
           <svg class="nav-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Narrative
+        </a>
+        <a href="#" class="nav-item" data-page="community">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Community
+          <span id="chatOnlineBadge" style="display:none;margin-left:auto;background:#27c97f;color:#000;font-size:9px;font-weight:800;padding:1px 5px;border-radius:99px">0</span>
         </a>
         <a href="#" class="nav-item" data-page="ai-trading">
           <svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -117,6 +126,7 @@
         <h1 class="page-title" id="pageTitle">AI ANALYZER</h1>
         <p class="page-subtitle" id="pageSubtitle">Analyze token risk, insider activity & wallet behavior from contract address</p>
         <div class="topbar-right">
+          <span id="testnetBadge" title="Backend NETWORK_ENV=testnet — trade/RPC calls target testnet chains" style="display:none;font-size:9px;font-weight:800;letter-spacing:1px;padding:4px 10px;border-radius:20px;background:#f5a62320;color:#f5a623;border:1px solid #f5a62350;white-space:nowrap">⚠ TESTNET MODE</span>
           <div class="network-selector" id="networkSelector" style="cursor:default">
             <span class="network-icon" id="networkIcon">🌐</span>
             <span id="networkLabel">Auto</span>
@@ -128,7 +138,8 @@
           </div>
           <button class="export-btn" id="exportBtn">Export Report</button>
           <button class="connect-wallet-btn" id="connectWalletBtn" onclick="openWalletModal()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8L2 7h20l-6-4z"/><circle cx="17" cy="14" r="1.5" fill="currentColor"/></svg>
+            <div id="walletBtnAvatar" style="display:none;width:20px;height:20px;border-radius:50%;overflow:hidden;flex-shrink:0;border:1px solid #27c97f55;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#27c97f;background:#27c97f22"></div>
+            <svg id="walletBtnIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8L2 7h20l-6-4z"/><circle cx="17" cy="14" r="1.5" fill="currentColor"/></svg>
             <span id="connectWalletLabel">Connect Wallet</span>
           </button>
         </div>
@@ -150,7 +161,7 @@
                 <div style="font-size:10px;color:#8b92a8">Browser extension wallet</div>
               </div>
             </button>
-            <div style="text-align:center;font-size:10px;color:#8b92a8;padding:8px 0">Powered by Privy</div>
+            <div style="text-align:center;font-size:10px;color:#8b92a8;padding:8px 0">EVM wallets · MetaMask</div>
           </div>
         </div>
       </div>
@@ -193,6 +204,11 @@
                   </span>
                 </div>
               </div>
+              <button id="analyzerTradeBtn" onclick="goToTrade()" title="Trade this token"
+                style="margin-left:14px;display:flex;align-items:center;gap:6px;background:#27c97f;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;color:#000;font-size:11px;font-weight:800;letter-spacing:0.5px;white-space:nowrap;flex-shrink:0">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>
+                TRADE
+              </button>
             </div>
             <div class="token-stats">
               <div class="stat-item">
@@ -218,6 +234,21 @@
               <div class="stat-item">
                 <span class="stat-label">CREATED</span>
                 <span class="stat-value" id="created">-</span>
+              </div>
+              <!-- Social Sentiment inline -->
+              <div class="stat-item" id="headerSocialItem" style="display:none;border-left:1px solid var(--border-light);padding-left:16px;min-width:160px">
+                <span class="stat-label">SENTIMENT</span>
+                <div id="headerSentimentLabel" style="font-size:12px;font-weight:800;margin-bottom:4px">—</div>
+                <div style="height:4px;border-radius:99px;background:var(--bg-secondary);overflow:hidden;display:flex;width:100%">
+                  <div id="headerBullBar" style="background:#27c97f;transition:width .5s ease;width:50%"></div>
+                  <div id="headerBearBar" style="background:#ef4444;transition:width .5s ease;width:50%"></div>
+                </div>
+                <div id="headerSentimentSub" style="font-size:9px;color:var(--text-muted);margin-top:3px">—</div>
+              </div>
+              <!-- Social Links inline -->
+              <div class="stat-item" id="headerSocialLinks" style="display:none;border-left:1px solid var(--border-light);padding-left:16px">
+                <span class="stat-label">COMMUNITY</span>
+                <div id="headerLinksRow" style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap"></div>
               </div>
             </div>
           </div>
@@ -423,6 +454,22 @@
               </div>
             </div>
 
+            <!-- AI Token Prediction Row -->
+            <div class="grid-row" style="grid-template-columns:1fr;display:grid">
+              <div class="card" id="predictionCard" style="min-height:200px">
+                <div class="card-header">
+                  <h3>🤖 AI TOKEN PREDICTION</h3>
+                  <span style="font-size:9px;color:var(--text-muted);margin-left:8px;font-style:italic">Not financial advice</span>
+                  <button id="predictionBtn" onclick="runPrediction()" style="margin-left:auto;background:#27c97f15;border:1px solid #27c97f40;color:#27c97f;font-size:11px;font-weight:700;padding:5px 14px;border-radius:6px;cursor:pointer;font-family:var(--font);letter-spacing:.5px">
+                    ▶ ANALYZE
+                  </button>
+                </div>
+                <div id="predictionContent" style="padding:12px 0">
+                  <div style="text-align:center;color:var(--text-muted);font-size:12px;padding:40px 0">Click ANALYZE to generate AI prediction for this token</div>
+                </div>
+              </div>
+            </div>
+
           </div>
 
           <!-- Empty state -->
@@ -433,7 +480,7 @@
               </svg>
             </div>
             <h2>Enter a Contract Address to Analyze</h2>
-            <p>Paste any Solana token contract address above and click SCAN ADDRESS to get AI-powered risk analysis, insider detection, and wallet behavior patterns.</p>
+            <p>Paste any token contract address above and click SCAN ADDRESS to get AI-powered risk analysis, insider detection, and wallet behavior patterns.</p>
           </div>
         </div>
 
@@ -480,15 +527,204 @@
             </div>
           </div>
         </div>
+        <div class="page ai-analyzer-page" id="page-trade">
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start">
+
+            <!-- ═══ LEFT COLUMN: token loader + swap ═══ -->
+            <div style="min-width:0">
+
+              <!-- Token loader -->
+              <div style="background:var(--bg-card);border:1px solid var(--border-light);border-radius:12px;padding:14px 16px;margin-bottom:14px">
+                <div style="font-size:9px;font-weight:800;letter-spacing:1.5px;color:var(--accent-orange);margin-bottom:8px">PASTE TOKEN ADDRESS TO TRADE · EVM ONLY</div>
+                <div style="display:flex;gap:8px">
+                  <input id="tradeTokenInput" placeholder="0x… token contract address"
+                    style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--text-primary);font-family:monospace;outline:none;min-width:0"
+                    onkeydown="if(event.key==='Enter') tradeLoadToken()"
+                    onfocus="this.style.borderColor='#27c97f'" onblur="this.style.borderColor='var(--border-light)'">
+                  <button onclick="tradeLoadToken()" style="background:#27c97f;border:none;border-radius:10px;padding:11px 22px;cursor:pointer;color:#000;font-size:11px;font-weight:800;letter-spacing:1px;white-space:nowrap;flex-shrink:0">LOAD</button>
+                </div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:9px">
+                  <span style="font-size:9px;color:var(--text-muted);align-self:center;margin-right:2px">Supported:</span>
+                  <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-muted)">Ethereum</span>
+                  <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-muted)">Base</span>
+                  <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-muted)">Arbitrum</span>
+                  <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-muted)">Polygon</span>
+                  <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-muted)">Optimism</span>
+                  <span style="font-size:9px;padding:2px 8px;border-radius:20px;background:var(--bg-secondary);border:1px solid var(--border-light);color:var(--text-muted)">Robinhood</span>
+                </div>
+              </div>
+
+              <!-- Token info bar -->
+              <div id="tradeTokenBar" style="display:none;align-items:center;gap:12px;background:var(--bg-card);border:1px solid var(--border-light);border-radius:12px;padding:14px 16px;margin-bottom:14px">
+                <img id="tradeTokenLogo" src="" style="width:38px;height:38px;border-radius:50%;display:none;flex-shrink:0">
+                <div style="min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span id="tradeTokenSymbol" style="font-size:15px;font-weight:800;color:var(--text-primary)">—</span>
+                    <span id="tradeChainBadge" style="font-size:9px;padding:2px 8px;border-radius:20px;font-weight:700;letter-spacing:0.5px;background:#27c97f20;color:#27c97f;border:1px solid #27c97f40"></span>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="tradeTokenName">—</div>
+                  <div style="font-size:10px;color:var(--text-muted);font-family:monospace;margin-top:2px" id="tradeTokenAddr">—</div>
+                </div>
+                <div style="margin-left:auto;text-align:right;flex-shrink:0">
+                  <div id="tradeTokenPrice" style="font-size:15px;font-weight:800;color:#27c97f;font-family:monospace">—</div>
+                  <div id="tradeTokenChange" style="font-size:11px;font-weight:700">—</div>
+                </div>
+              </div>
+
+              <!-- Empty state -->
+              <div id="tradeEmptyState" style="text-align:center;padding:56px 20px;background:var(--bg-card);border:1px solid var(--border-light);border-radius:12px;color:var(--text-muted)">
+                <div style="width:56px;height:56px;border-radius:50%;background:#27c97f15;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>
+                </div>
+                <div style="font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:6px">Bloombark Trade</div>
+                <div style="font-size:12px;line-height:1.6">Paste an EVM token contract address above to get live quotes<br>and swap directly with your connected MetaMask wallet.</div>
+              </div>
+
+              <!-- Swap panel -->
+              <div id="swapPanel" class="card" style="display:none;padding:0;overflow:hidden">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--border-light)">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>
+                    <span style="font-size:11px;font-weight:800;letter-spacing:1px;color:var(--text-primary)">SWAP</span>
+                  </div>
+                  <div id="swapWalletStatus" style="font-size:10px;color:var(--text-muted)">—</div>
+                </div>
+                <div style="display:flex;gap:0;flex-wrap:wrap">
+                  <!-- Left: swap form -->
+                  <div style="flex:1;min-width:280px;padding:16px;border-right:1px solid var(--border-light)">
+                    <div style="display:flex;gap:6px;margin-bottom:14px;background:var(--bg-secondary);border-radius:10px;padding:3px">
+                      <button id="swapTabBuy"  onclick="swapSetSide('buy')"  style="flex:1;padding:8px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;background:#27c97f;border:none;color:#000;letter-spacing:0.5px;transition:background .15s">BUY</button>
+                      <button id="swapTabSell" onclick="swapSetSide('sell')" style="flex:1;padding:8px;border-radius:8px;font-size:11px;font-weight:800;cursor:pointer;background:transparent;border:none;color:var(--text-muted);letter-spacing:0.5px;transition:background .15s">SELL</button>
+                    </div>
+                    <div style="margin-bottom:6px">
+                      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                        <span style="font-size:9px;color:var(--text-muted);font-weight:700;letter-spacing:0.5px">YOU PAY</span>
+                        <span id="swapBalanceLabel" style="font-size:9px;color:var(--text-muted)"></span>
+                      </div>
+                      <div style="display:flex;gap:8px;align-items:center;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:10px;padding:4px">
+                        <div id="swapFromLabel" style="background:var(--bg-card);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;color:var(--text-primary);white-space:nowrap;text-align:center;flex-shrink:0">ETH</div>
+                        <input id="swapAmountIn" type="number" min="0" step="any" placeholder="0.0"
+                          style="flex:1;background:transparent;border:none;padding:8px 12px 8px 6px;font-size:15px;color:var(--text-primary);font-family:monospace;outline:none;min-width:0;text-align:right;-moz-appearance:textfield"
+                          oninput="swapScheduleQuote()">
+                      </div>
+                      <div id="swapPresets" style="display:flex;gap:4px;margin-top:8px">
+                        <button onclick="swapPresetPct(10)"  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">10%</button>
+                        <button onclick="swapPresetPct(25)"  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">25%</button>
+                        <button onclick="swapPresetPct(50)"  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">50%</button>
+                        <button onclick="swapPresetPct(75)"  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">75%</button>
+                        <button onclick="swapPresetPct(100)" style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px;font-size:10px;font-weight:700;color:#27c97f;cursor:pointer">MAX</button>
+                      </div>
+                    </div>
+                    <div style="display:flex;justify-content:center;margin:2px 0">
+                      <div style="width:30px;height:30px;border-radius:50%;background:var(--bg-secondary);border:1px solid var(--border-light);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:14px;z-index:1;margin:-6px 0">↓</div>
+                    </div>
+                    <div style="margin-bottom:14px">
+                      <div style="font-size:9px;color:var(--text-muted);font-weight:700;margin-bottom:6px;letter-spacing:0.5px">YOU RECEIVE (est.)</div>
+                      <div style="display:flex;gap:8px;align-items:center;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:10px;padding:4px">
+                        <div id="swapToLabel" style="background:var(--bg-card);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;color:#27c97f;white-space:nowrap;text-align:center;flex-shrink:0">TOKEN</div>
+                        <div id="swapAmountOut" style="flex:1;padding:8px 12px 8px 6px;font-size:15px;color:var(--text-muted);font-family:monospace;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</div>
+                      </div>
+                    </div>
+                    <button id="swapExecBtn" onclick="swapExecute()" style="width:100%;padding:13px;background:#27c97f;border:none;border-radius:10px;color:#000;font-size:13px;font-weight:800;cursor:pointer;letter-spacing:0.5px">BUY</button>
+                  </div>
+                  <!-- Right: details -->
+                  <div style="width:210px;min-width:190px;padding:16px;display:flex;flex-direction:column;gap:12px">
+                    <div>
+                      <div style="font-size:9px;color:var(--text-muted);font-weight:700;margin-bottom:7px;letter-spacing:0.5px">SLIPPAGE TOLERANCE</div>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap">
+                        <button onclick="swapSetSlippage(0.5)" id="slipBtn05" style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px 2px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer;min-width:38px">0.5%</button>
+                        <button onclick="swapSetSlippage(1)"   id="slipBtn1"  style="flex:1;background:#27c97f20;border:1px solid #27c97f60;border-radius:6px;padding:5px 2px;font-size:10px;font-weight:700;color:#27c97f;cursor:pointer;min-width:38px">1%</button>
+                        <button onclick="swapSetSlippage(3)"   id="slipBtn3"  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px 2px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer;min-width:38px">3%</button>
+                        <button onclick="swapSetSlippage(5)"   id="slipBtn5"  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:5px 2px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer;min-width:38px">5%</button>
+                      </div>
+                    </div>
+                    <div style="height:1px;background:var(--border-light)"></div>
+                    <div style="display:flex;flex-direction:column;gap:8px;font-size:10px">
+                      <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-muted)">Price impact</span><span id="swapImpact" style="font-weight:700;color:#27c97f">—</span></div>
+                      <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-muted)">Min received</span><span id="swapMinOut" style="font-weight:700;color:var(--text-primary)">—</span></div>
+                      <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-muted)">Rate</span><span id="swapRate" style="font-weight:700;color:var(--text-primary);text-align:right;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span></div>
+                      <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-muted)">Est. gas</span><span id="swapGas" style="font-weight:700;color:var(--text-primary)">—</span></div>
+                      <div style="display:flex;justify-content:space-between;align-items:center"><span style="color:var(--text-muted)">Route</span><span id="swapRoute" style="font-weight:700;color:var(--text-muted);font-size:9px;text-align:right;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span></div>
+                    </div>
+                    <div id="swapQuoteStatus" style="font-size:9px;color:var(--text-muted);margin-top:auto;line-height:1.5">Enter amount to get quote</div>
+                    <div id="swapTxStatus" style="font-size:10px;display:none;word-break:break-all;line-height:1.5"></div>
+                  </div>
+                </div>
+                <div style="padding:9px 16px;border-top:1px solid var(--border-light);text-align:right;background:var(--bg-secondary)"><span style="font-size:9px;color:var(--text-muted)">Best route via KyberSwap Aggregator</span></div>
+              </div>
+
+              <!-- Live price chart -->
+              <div id="tradeChartCard" class="card" style="display:none;padding:0;overflow:hidden;margin-top:14px">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-light)">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    <span style="font-size:11px;font-weight:800;letter-spacing:1px;color:var(--text-primary)">PRICE CHART</span>
+                    <span id="tradeChartLive" style="display:inline-flex;align-items:center;gap:4px;font-size:9px;color:#27c97f;font-weight:700"><span style="width:6px;height:6px;border-radius:50%;background:#27c97f;display:inline-block"></span>LIVE</span>
+                  </div>
+                  <div style="display:flex;gap:4px">
+                    <button class="trade-chart-int" data-int="1s"  onclick="tradeSetInterval('1s')"  style="background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">1s</button>
+                    <button class="trade-chart-int" data-int="30s" onclick="tradeSetInterval('30s')" style="background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">30s</button>
+                    <button class="trade-chart-int active" data-int="1m" onclick="tradeSetInterval('1m')" style="background:#27c97f20;border:1px solid #27c97f60;border-radius:6px;padding:3px 10px;font-size:10px;font-weight:700;color:#27c97f;cursor:pointer">1m</button>
+                    <button class="trade-chart-int" data-int="5m"  onclick="tradeSetInterval('5m')"  style="background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:600;color:var(--text-muted);cursor:pointer">5m</button>
+                  </div>
+                </div>
+                <div id="tradeChart" style="height:260px;width:100%"></div>
+              </div>
+
+              <!-- Recent transactions -->
+              <div id="tradeTxCard" class="card" style="display:none;padding:0;overflow:hidden;margin-top:14px">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-light)">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                    <span style="font-size:11px;font-weight:800;letter-spacing:1px;color:var(--text-primary)">RECENT TRANSACTIONS</span>
+                  </div>
+                  <span id="tradeTxUpdated" style="font-size:9px;color:var(--text-muted)"></span>
+                </div>
+                <div style="display:grid;grid-template-columns:56px 1fr 1fr 1fr 62px 34px;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border-light);font-size:9px;font-weight:700;letter-spacing:0.5px;color:var(--text-muted)">
+                  <span>TYPE</span><span style="text-align:right">PRICE</span><span style="text-align:right">VALUE</span><span>WALLET</span><span style="text-align:right">TIME</span><span style="text-align:right">TX</span>
+                </div>
+                <div id="tradeTxList" style="max-height:300px;overflow-y:auto"></div>
+              </div>
+            </div>
+
+            <!-- ═══ RIGHT COLUMN: wallet holdings (sticky) ═══ -->
+            <div style="position:sticky;top:0">
+              <div id="tradeHoldingsCard" class="card" style="display:none;padding:0;overflow:hidden">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--border-light)">
+                  <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2" style="flex-shrink:0"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8L2 7h20l-6-4z"/></svg>
+                    <span style="font-size:11px;font-weight:800;letter-spacing:1px;color:var(--text-primary);white-space:nowrap">HOLDINGS</span>
+                  </div>
+                  <button onclick="tradeLoadHoldings(true)" title="Refresh" style="background:none;border:1px solid var(--border-light);border-radius:6px;padding:4px 7px;cursor:pointer;color:var(--text-muted);font-size:11px;flex-shrink:0">↻</button>
+                </div>
+                <div id="tradeHoldingsTotal" style="padding:12px 16px;font-size:20px;font-weight:800;color:var(--text-primary);font-family:monospace;border-bottom:1px solid var(--border-light)"></div>
+                <div id="tradeHoldingsList" style="max-height:520px;overflow-y:auto"></div>
+              </div>
+              <div id="tradeHoldingsEmpty" class="card" style="padding:28px 18px;text-align:center">
+                <div style="width:38px;height:38px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8L2 7h20l-6-4z"/></svg>
+                </div>
+                <div style="font-size:11px;font-weight:700;color:var(--text-primary);margin-bottom:4px">No wallet connected</div>
+                <div style="font-size:10px;color:var(--text-muted);line-height:1.5">Connect MetaMask to see your token holdings here.</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
         <div class="page ai-analyzer-page" id="page-wallet-tracker">
           <div class="search-section">
             <label class="search-label">PASTE WALLET ADDRESS</label>
             <div class="search-bar">
-              <input id="wtInput" type="text" placeholder="Enter wallet address (Solana or EVM 0x...)" class="search-input" autocomplete="off" spellcheck="false"/>
-              <select id="wtChainSelect" style="background:#13161d;border:none;border-left:1px solid var(--border-light);padding:12px 6px 12px 14px;color:var(--text-primary);font-size:13px;font-family:var(--font);font-weight:600;outline:none;display:none;cursor:pointer;appearance:auto;-webkit-appearance:auto;align-self:stretch">
-                <option value="ethereum">Ethereum</option>
-                <option value="base">Base</option>
-              </select>
+              <input id="wtInput" type="text" placeholder="Enter wallet address (0x...)" class="search-input" autocomplete="off" spellcheck="false"/>
+              <div id="wtChainSelectWrap" style="display:none;position:relative;border-left:1px solid var(--border-light);align-self:stretch;flex-shrink:0">
+                <select id="wtChainSelect" style="background:#1a1d26;border:none;padding:10px 28px 10px 14px;color:var(--text-primary);font-size:13px;font-family:var(--font);font-weight:600;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;height:100%;width:100%">
+                  <option value="ethereum">Ethereum</option>
+                  <option value="base">Base</option>
+                  <option value="robinhood">Robinhood</option>
+                </select>
+                <svg style="position:absolute;right:8px;top:50%;transform:translateY(-50%);pointer-events:none" width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L5 5L9 1" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
               <button id="wtCopyBtn" class="copy-btn" title="Copy address">
                 <svg width="16" height="16" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               </button>
@@ -533,9 +769,99 @@
         <div class="page placeholder-page" id="page-insider-scan">
           <div class="placeholder-content"><h2>Insider Scan</h2><p>Batch scan tokens for insider activity.</p></div>
         </div>
-        <div class="page placeholder-page" id="page-narrative">
-          <div class="placeholder-content"><h2>Narrative</h2><p>Track trending narratives and sectors.</p></div>
+        <div class="page ai-analyzer-page" id="page-narrative">
+          <div style="padding:0 0 20px">
+            <!-- Header -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Narrative Tracker</div>
+                <div style="font-size:20px;font-weight:800;color:var(--text-primary)">Market Narratives</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Track sector rotation & trending themes · Updated every 5 min</div>
+              </div>
+              <button onclick="loadNarrative()" style="background:var(--bg-card);border:1px solid var(--border-light);color:var(--text-muted);font-size:11px;padding:7px 14px;border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600">↻ Refresh</button>
+            </div>
+            <!-- Sort bar -->
+            <div style="display:flex;gap:8px;margin-bottom:16px" id="narrativeSortBar">
+              <button class="narr-sort-btn active" data-sort="change">🔥 Top Gainers</button>
+              <button class="narr-sort-btn" data-sort="mcap">💰 Market Cap</button>
+              <button class="narr-sort-btn" data-sort="losers">📉 Top Losers</button>
+            </div>
+            <!-- Grid -->
+            <div id="narrativeGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+              <div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-muted);font-size:13px">Loading narratives…</div>
+            </div>
+          </div>
         </div>
+        <!-- Community Chat Page -->
+        <div class="page ai-analyzer-page" id="page-community" style="height:100%;padding:0">
+          <div style="display:flex;height:100%;overflow:hidden">
+
+            <!-- Sidebar: rooms + online users -->
+            <div style="width:200px;flex-shrink:0;background:var(--bg-card);border-right:1px solid var(--border-light);display:flex;flex-direction:column;overflow:hidden">
+              <div style="padding:14px 14px 10px;border-bottom:1px solid var(--border-light)">
+                <div style="font-size:10px;font-weight:800;color:var(--text-muted);letter-spacing:1px;margin-bottom:12px">CHANNELS</div>
+                <div id="chatRoomList" style="display:flex;flex-direction:column;gap:2px"></div>
+              </div>
+              <div style="padding:12px 14px;flex:1;overflow-y:auto">
+                <div style="font-size:10px;font-weight:800;color:var(--text-muted);letter-spacing:1px;margin-bottom:10px">
+                  ONLINE — <span id="chatOnlineCount" style="color:#27c97f">0</span>
+                </div>
+                <div id="chatUserList" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+            </div>
+
+            <!-- Main chat area -->
+            <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+              <!-- Room header -->
+              <div style="padding:14px 18px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span id="chatRoomIcon" style="font-size:18px">💬</span>
+                <div>
+                  <div id="chatRoomName" style="font-size:14px;font-weight:800;color:var(--text-primary)">General</div>
+                  <div id="chatRoomDesc" style="font-size:11px;color:var(--text-muted)">General discussion</div>
+                </div>
+                <div style="margin-left:auto;font-size:11px;color:var(--text-muted)">
+                  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#27c97f;margin-right:4px"></span>
+                  <span id="chatOnlineHeader">0 online</span>
+                </div>
+              </div>
+
+              <!-- Messages -->
+              <div id="chatMessages" style="flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:2px"></div>
+
+              <!-- Image preview -->
+              <div id="chatImgPreview" style="display:none;padding:8px 18px;border-top:1px solid var(--border-light);background:var(--bg-secondary);flex-shrink:0">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <img id="chatImgThumb" style="height:60px;border-radius:6px;object-fit:cover;max-width:120px">
+                  <div style="flex:1;font-size:11px;color:var(--text-muted)">Image ready to send</div>
+                  <button onclick="chatClearImg()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1">✕</button>
+                </div>
+              </div>
+
+              <!-- Emoji picker -->
+              <div id="emojiPicker" style="display:none;padding:10px 18px;border-top:1px solid var(--border-light);background:var(--bg-card);flex-shrink:0;flex-wrap:wrap;gap:4px"></div>
+
+              <!-- Input -->
+              <div id="chatInputBar" style="padding:10px 18px;border-top:1px solid var(--border-light);display:flex;gap:8px;flex-shrink:0;align-items:center">
+                <!-- Emoji toggle -->
+                <button onclick="toggleEmojiPicker()" title="Emoji"
+                  style="background:none;border:1px solid var(--border-light);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:16px;line-height:1;flex-shrink:0;color:var(--text-muted);transition:border-color .15s"
+                  onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border-light)'">😀</button>
+                <!-- Image upload -->
+                <label title="Upload image" style="background:none;border:1px solid var(--border-light);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0;color:var(--text-muted);display:flex;align-items:center;transition:border-color .15s"
+                  onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border-light)'">
+                  🖼️<input id="chatImgInput" type="file" accept="image/*" style="display:none" onchange="chatLoadImg(this)">
+                </label>
+                <input id="chatInput" maxlength="500" placeholder="Message #general…"
+                  style="flex:1;background:var(--bg-secondary);border:1px solid var(--border-light);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--text-primary);font-family:var(--font);outline:none"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}">
+                <button onclick="chatSend()"
+                  style="background:#27c97f;border:none;border-radius:8px;padding:10px 18px;cursor:pointer;color:#000;font-size:12px;font-weight:800;font-family:var(--font);flex-shrink:0">SEND</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
         <div class="page placeholder-page" id="page-ai-trading">
           <div class="placeholder-content"><h2>AI Trading Agent</h2><p>Automated trading signals powered by AI.</p></div>
         </div>
@@ -596,7 +922,7 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </div>
               <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">AI Token Analyzer</div>
-              <div style="font-size:12px;color:#6b7280;line-height:1.6">Deep-scan any token contract across Solana &amp; EVM chains. Get risk scores, honeypot detection, tax analysis, and holder breakdowns in seconds.</div>
+              <div style="font-size:12px;color:#6b7280;line-height:1.6">Deep-scan any EVM token contract. Get risk scores, honeypot detection, tax analysis, and holder breakdowns in seconds.</div>
             </div>
 
             <div style="background:#0d0f1a;border:1px solid #1e2235;border-radius:14px;padding:24px">
@@ -628,7 +954,7 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9b59b6" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
               <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Market Overview</div>
-              <div style="font-size:12px;color:#6b7280;line-height:1.6">Real-time market data across Solana, Ethereum, BSC, Base, and more. Track trending tokens, top volume pairs, and new launches in one dashboard.</div>
+              <div style="font-size:12px;color:#6b7280;line-height:1.6">Real-time market data across Ethereum, Base, Robinhood Chain, and more. Track trending tokens, top volume pairs, and new launches in one dashboard.</div>
             </div>
 
             <div style="background:#0d0f1a;border:1px solid #1e2235;border-radius:14px;padding:24px">
@@ -700,7 +1026,15 @@
     </div>
     <!-- Status -->
     <div style="padding:18px 18px 14px;text-align:center;border-bottom:1px solid #1e2235">
-      <div id="popupAvatar" style="width:44px;height:44px;border-radius:50%;background:#27c97f22;border:2px solid #27c97f55;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#27c97f;margin:0 auto 10px">P</div>
+      <!-- Avatar: click to upload -->
+      <div style="position:relative;width:64px;height:64px;margin:0 auto 10px;cursor:pointer" onclick="document.getElementById('profileAvatarInput').click()" title="Click to change photo">
+        <div id="popupAvatar" style="width:64px;height:64px;border-radius:50%;background:#27c97f22;border:2px solid #27c97f55;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#27c97f;overflow:hidden">P</div>
+        <div style="position:absolute;bottom:0;right:0;width:20px;height:20px;border-radius:50%;background:#27c97f;display:flex;align-items:center;justify-content:center;border:2px solid #13161d">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+      </div>
+      <input id="profileAvatarInput" type="file" accept="image/*" style="display:none" onchange="profileAvatarPicked(this)">
+      <div id="profileAvatarStatus" style="font-size:9px;color:#6b7280;margin-bottom:6px">Click photo to change</div>
       <div style="display:inline-flex;align-items:center;gap:5px;background:#27c97f15;border:1px solid #27c97f30;border-radius:20px;padding:3px 12px;margin-bottom:10px">
         <span style="width:6px;height:6px;border-radius:50%;background:#27c97f;display:inline-block;flex-shrink:0"></span>
         <span style="font-size:10px;color:#27c97f;font-weight:600">CONNECTED</span>
@@ -708,6 +1042,36 @@
       <div style="background:#27c97f10;border:1px solid #27c97f30;border-radius:10px;padding:8px 12px;text-align:center">
         <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#27c97f;margin-right:6px;vertical-align:middle;flex-shrink:0"></span><span id="popupWalletFull" style="font-size:10px;font-family:monospace;color:#27c97f;font-weight:600;word-break:break-all;line-height:1.6">—</span>
       </div>
+    </div>
+    <!-- Community display name (hidden entirely when wallet is disconnected) -->
+    <div id="usernameSection" style="display:none;padding:14px 18px;border-bottom:1px solid #1e2235">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:9px;font-weight:800;letter-spacing:1.5px;color:#6b7280">USERNAME</div>
+        <div id="chatNameEditsLeft" style="font-size:9px;color:#6b7280"></div>
+      </div>
+      <!-- View state: grey text + edit button -->
+      <div id="chatNameView" style="display:none;align-items:center;gap:8px">
+        <div id="chatNameDisplay" style="flex:1;background:#13161d;border:1px solid #1e2235;border-radius:10px;padding:10px 12px;font-size:12px;color:#6b7280;font-family:monospace"></div>
+        <button id="chatNameEditBtn" onclick="chatNameStartEdit()"
+          style="background:#1e2235;border:1px solid #2d3748;border-radius:10px;padding:10px 14px;cursor:pointer;color:#8b92a8;font-size:11px;font-weight:800;font-family:monospace;white-space:nowrap">
+          EDIT
+        </button>
+      </div>
+      <!-- Edit state: input + save + cancel -->
+      <div id="chatNameEdit" style="display:flex;gap:8px">
+        <input id="chatNameInput" maxlength="24" placeholder="Set your chat name…"
+          style="flex:1;background:#1e2235;border:1px solid #2d3748;border-radius:10px;padding:10px 12px;font-size:12px;color:#e2e8f0;font-family:monospace;outline:none;min-width:0"
+          onkeydown="if(event.key==='Enter') chatSetName(); else if(event.key==='Escape') chatNameCancel()"
+          onfocus="this.style.borderColor='#27c97f'" onblur="this.style.borderColor='#2d3748'">
+        <button onclick="chatSetName()"
+          style="background:#27c97f15;border:1px solid #27c97f40;border-radius:10px;padding:10px 14px;cursor:pointer;color:#27c97f;font-size:11px;font-weight:800;font-family:monospace;white-space:nowrap">
+          SAVE
+        </button>
+        <button id="chatNameCancelBtn" onclick="chatNameCancel()" style="display:none;background:#1e2235;border:1px solid #2d3748;border-radius:10px;padding:10px 12px;cursor:pointer;color:#8b92a8;font-size:11px;font-weight:800;font-family:monospace;white-space:nowrap">
+          ✕
+        </button>
+      </div>
+      <div id="chatNameStatus" style="font-size:10px;color:#27c97f;margin-top:5px;display:none">✓ Name updated</div>
     </div>
     <!-- Copy button -->
     <div style="padding:14px 18px;border-bottom:1px solid #1e2235">
@@ -722,9 +1086,9 @@
         DISCONNECT
       </button>
     </div>
-    <div style="padding-bottom:12px;text-align:center;font-size:10px;color:#4b5563">Powered by Privy</div>
+    <div style="padding-bottom:12px;text-align:center;font-size:10px;color:#4b5563">EVM wallets · MetaMask</div>
   </div>
 
-  <script src="js/app.js?v=69"></script>
+  <script src="js/app.js?v=108"></script>
 </body>
 </html>

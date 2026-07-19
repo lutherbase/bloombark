@@ -932,3 +932,67 @@ input:checked + .toggle-slider::before { transform: translateX(18px); }
 }
 .dash-filter-btn:hover { border-color: var(--accent-blue); color: var(--text-primary); }
 .dash-filter-btn.active { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+
+/* Narrative Tracker */
+.narr-sort-btn {
+  padding: 5px 14px; border-radius: 20px; border: 1px solid var(--border-light);
+  background: transparent; color: var(--text-secondary);
+  font-size: 11px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.narr-sort-btn:hover { border-color: var(--accent-green); color: var(--text-primary); }
+.narr-sort-btn.active { background: var(--accent-green); border-color: var(--accent-green); color: #fff; }
+
+.narr-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.narr-card:hover { border-color: var(--accent-blue); transform: translateY(-1px); }
+.narr-card.bullish { border-left: 3px solid var(--accent-green); }
+.narr-card.bearish { border-left: 3px solid var(--accent-red); }
+.narr-card.neutral { border-left: 3px solid var(--text-muted); }
+
+/* ─── Community Chat ─────────────────────────────────────────────────────────── */
+#page-community { padding: 0 !important; }
+
+.chat-room-btn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 6px; border: none;
+  background: transparent; color: var(--text-muted);
+  font-size: 12px; font-family: var(--font); font-weight: 600;
+  cursor: pointer; width: 100%; text-align: left; transition: background .1s, color .1s;
+}
+.chat-room-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.chat-room-btn.active { background: var(--accent-green)18; color: var(--accent-green); }
+.chat-room-btn .room-unread {
+  margin-left: auto; background: var(--accent-red);
+  color: #fff; font-size: 9px; font-weight: 800;
+  padding: 1px 5px; border-radius: 99px; display: none;
+}
+
+.chat-msg { display: flex; gap: 10px; padding: 4px 0; border-radius: 6px; }
+.chat-msg:hover { background: var(--bg-secondary); padding: 4px 8px; margin: 0 -8px; }
+.chat-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; color: #000;
+}
+.chat-bubble { flex: 1; min-width: 0; }
+.chat-name { font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.chat-time { font-size: 10px; color: var(--text-muted); margin-left: 6px; }
+.chat-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; word-break: break-word; margin-top: 2px; }
+.chat-text a { color: var(--accent-blue); text-decoration: none; }
+
+.chat-system { text-align: center; font-size: 11px; color: var(--text-muted); padding: 6px 0; font-style: italic; }
+
+#chatInput:focus { border-color: var(--accent-green); }
+#chatNameInput:focus { border-color: var(--accent-green); }
+
+/* Trade page: hide native number input spinners so amount fields look clean */
+#swapAmountIn::-webkit-outer-spin-button,
+#swapAmountIn::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#swapAmountIn { -moz-appearance: textfield; }
