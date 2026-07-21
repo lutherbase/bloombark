@@ -50,11 +50,11 @@
           <svg class="nav-icon" viewBox="0 0 24 24"><path d="M21 18v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1"/><polyline points="15 3 9 3 9 21 15 21"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
           Wallet Tracker
         </a>
-        <a href="#" class="nav-item" data-page="smart-money">
+        <a href="#" class="nav-item" data-page="smart-money" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           Smart Money
         </a>
-        <a href="#" class="nav-item" data-page="insider-scan">
+        <a href="#" class="nav-item" data-page="insider-scan" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           Insider Scan
         </a>
@@ -67,18 +67,18 @@
           Community
           <span id="chatOnlineBadge" style="display:none;margin-left:auto;background:#27c97f;color:#000;font-size:9px;font-weight:800;padding:1px 5px;border-radius:99px">0</span>
         </a>
-        <a href="#" class="nav-item" data-page="ai-trading">
+        <a href="#" class="nav-item" data-page="ai-trading" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           AI Trading Agent
         </a>
-        <a href="#" class="nav-item" data-page="auto-research">
+        <a href="#" class="nav-item" data-page="auto-research" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Auto Research
         </a>
 
         <div class="nav-divider"></div>
 
-        <a href="#" class="nav-item" data-page="alerts">
+        <a href="#" class="nav-item" data-page="alerts" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           Alerts
           <span class="nav-badge">3</span>
@@ -87,11 +87,11 @@
           <svg class="nav-icon" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           Watchlist
         </a>
-        <a href="#" class="nav-item" data-page="portfolio">
+        <a href="#" class="nav-item" data-page="portfolio" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
           Portfolio
         </a>
-        <a href="#" class="nav-item" data-page="leaderboard">
+        <a href="#" class="nav-item" data-page="leaderboard" style="display:none">
           <svg class="nav-icon" viewBox="0 0 24 24"><polyline points="18 20 18 10"/><polyline points="12 20 12 4"/><polyline points="6 20 6 14"/></svg>
           Leaderboard
         </a>
@@ -515,16 +515,6 @@
                 </div>
               </div>
             </div>
-            <!-- New Pairs (only shown on per-chain) -->
-            <div class="dash-section" id="dashNewPairsSection" style="display:none">
-              <div class="dash-section-header">
-                <span class="dash-section-title">🆕 NEW PAIRS</span>
-                <span class="dash-section-sub" id="dashNewSub"></span>
-              </div>
-              <div class="dash-vol-wrap">
-                <div class="dash-volume-grid" id="dashNewPairsList"></div>
-              </div>
-            </div>
           </div>
         </div>
         <div class="page ai-analyzer-page" id="page-trade">
@@ -669,6 +659,7 @@
                   </div>
                 </div>
                 <div id="tradeChart" style="height:260px;width:100%"></div>
+                <div style="padding:6px 16px 9px;border-top:1px solid var(--border-light);text-align:right;background:var(--bg-secondary)"><span style="font-size:9px;color:var(--text-muted);font-style:italic">Chart is derived from Bloombark's Recent Transactions data</span></div>
               </div>
 
               <!-- Recent transactions -->
@@ -899,15 +890,15 @@
           <!-- Hero -->
           <div style="text-align:center;padding:48px 24px 40px;border-bottom:1px solid #1e2235">
             <div style="font-size:11px;font-weight:700;letter-spacing:3px;color:#27c97f;margin-bottom:16px">BLOOMBARK TERMINAL</div>
-            <h1 style="font-size:36px;font-weight:800;color:#e2e8f0;margin:0 0 16px;line-height:1.2">The All-in-One<br><span style="color:#27c97f">Token Intelligence</span> Platform</h1>
+            <h1 style="font-size:36px;font-weight:800;color:#e2e8f0;margin:0 0 16px;line-height:1.2">The All-in-One EVM<br><span style="color:#27c97f">Token Intelligence</span> Platform</h1>
             <p style="font-size:14px;color:#9ca3af;max-width:560px;margin:0 auto 28px;line-height:1.7">Bloombark gives traders and researchers real-time on-chain intelligence — from insider detection to wallet tracking — all in one terminal.</p>
             <!-- Ticker + CA Box -->
             <div style="display:inline-flex;flex-direction:column;align-items:center;gap:12px">
-              <div style="font-size:28px;font-weight:900;letter-spacing:2px;color:#27c97f">$BLOOM</div>
+              <div style="font-size:28px;font-weight:900;letter-spacing:2px;color:#27c97f">$BBRK</div>
               <div style="display:inline-flex;align-items:center;gap:10px;background:#0d0f1a;border:1px solid #27c97f33;border-radius:12px;padding:12px 20px">
                 <div style="text-align:left">
                   <div style="font-size:9px;font-weight:700;letter-spacing:2px;color:#6b7280;margin-bottom:5px">CONTRACT ADDRESS</div>
-                  <div id="landingCA" style="font-size:12px;font-weight:700;font-family:monospace;color:#4b5563;letter-spacing:1.5px">Loading…</div>
+                  <div id="landingCA" style="font-size:12px;font-weight:700;font-family:monospace;color:#4b5563;letter-spacing:1.5px">Not Live Yet</div>
                 </div>
                 <button id="landingCACopy" onclick="__copyCA()" style="display:none;background:#27c97f;border:none;border-radius:8px;color:#000;font-size:11px;font-weight:700;padding:6px 14px;cursor:pointer;white-space:nowrap">COPY CA</button>
               </div>
@@ -921,7 +912,7 @@
               <div style="width:40px;height:40px;background:#27c97f18;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">AI Token Analyzer</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">AI Token Analyzer</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Deep-scan any EVM token contract. Get risk scores, honeypot detection, tax analysis, and holder breakdowns in seconds.</div>
             </div>
 
@@ -929,7 +920,7 @@
               <div style="width:40px;height:40px;background:#4a90e218;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4a90e2" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Wallet Relationship Map</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Wallet Relationship Map</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Visualize on-chain connections between wallets. Detect insider clusters, coordinated buys, and hidden team wallets through live bubble-map graphs.</div>
             </div>
 
@@ -937,7 +928,7 @@
               <div style="width:40px;height:40px;background:#f5a62318;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f5a623" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Smart Money Tracking</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Smart Money Tracking</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f5a623;background:#f5a62318;border:1px solid #f5a62340;border-radius:5px;padding:2px 6px;white-space:nowrap">IN DEVELOPMENT</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Follow wallets with a proven track record. Monitor smart money flows in real time and get alerted when they enter or exit a position.</div>
             </div>
 
@@ -945,7 +936,7 @@
               <div style="width:40px;height:40px;background:#ff6b8a18;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff6b8a" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Insider Scan</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Insider Scan</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f5a623;background:#f5a62318;border:1px solid #f5a62340;border-radius:5px;padding:2px 6px;white-space:nowrap">IN DEVELOPMENT</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Identify team wallets, early insiders, and suspicious accumulation patterns before they dump. Cross-reference wallet activity across multiple tokens.</div>
             </div>
 
@@ -953,7 +944,7 @@
               <div style="width:40px;height:40px;background:#9b59b618;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9b59b6" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Market Overview</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Market Overview</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Real-time market data across Ethereum, Base, Robinhood Chain, and more. Track trending tokens, top volume pairs, and new launches in one dashboard.</div>
             </div>
 
@@ -961,7 +952,7 @@
               <div style="width:40px;height:40px;background:#27c97f18;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Wallet Tracker</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Wallet Tracker</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Track any wallet's holdings, PnL, and full transaction history across chains. See exactly what tokens they hold and how they're performing.</div>
             </div>
 
@@ -970,7 +961,7 @@
               <div style="width:40px;height:40px;background:#e86c3a18;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e86c3a" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Narrative</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Narrative</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Stay ahead of the market by tracking emerging narratives and sector rotations in real time. Know which themes are gaining traction before the crowd.</div>
             </div>
 
@@ -978,7 +969,7 @@
               <div style="width:40px;height:40px;background:#27c97f18;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">AI Trading Agent</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">AI Trading Agent</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f5a623;background:#f5a62318;border:1px solid #f5a62340;border-radius:5px;padding:2px 6px;white-space:nowrap">IN DEVELOPMENT</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Let AI analyze market conditions and execute strategies on your behalf. Set parameters, define risk tolerance, and let the agent work 24/7 while you sleep.</div>
             </div>
 
@@ -986,8 +977,32 @@
               <div style="width:40px;height:40px;background:#4a90e218;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4a90e2" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               </div>
-              <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Auto Research</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Auto Research</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#f5a623;background:#f5a62318;border:1px solid #f5a62340;border-radius:5px;padding:2px 6px;white-space:nowrap">IN DEVELOPMENT</span></div>
               <div style="font-size:12px;color:#6b7280;line-height:1.6">Automated deep-dive research on any token. Aggregates on-chain data, social signals, and sentiment into a concise report — in seconds, not hours.</div>
+            </div>
+
+            <div style="background:#0d0f1a;border:1px solid #1e2235;border-radius:14px;padding:24px">
+              <div style="width:40px;height:40px;background:#27c97f18;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#27c97f" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Community</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
+              <div style="font-size:12px;color:#6b7280;line-height:1.6">Chat live with other traders, share calls, and unlock token-gated channels by holding $BBRK — plus an on-call bot for instant token lookups.</div>
+            </div>
+
+            <div style="background:#0d0f1a;border:1px solid #1e2235;border-radius:14px;padding:24px">
+              <div style="width:40px;height:40px;background:#4a90e218;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4a90e2" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">Trade</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
+              <div style="font-size:12px;color:#6b7280;line-height:1.6">Swap any EVM token directly from the terminal — best-price routing, live quotes, and one-click execution without leaving your research flow.</div>
+            </div>
+
+            <div style="background:#0d0f1a;border:1px solid #1e2235;border-radius:14px;padding:24px">
+              <div style="width:40px;height:40px;background:#f5a62318;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f5a623" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2a10 10 0 0 1 10 10h-10z"/></svg>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#e2e8f0">AI Prediction</div><span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#27c97f;background:#27c97f18;border:1px solid #27c97f40;border-radius:5px;padding:2px 6px;white-space:nowrap">LIVE</span></div>
+              <div style="font-size:12px;color:#6b7280;line-height:1.6">AI-driven price and risk forecasts for any token, built from on-chain activity and market data — a second opinion before you enter a trade.</div>
             </div>
 
           </div>
@@ -1026,20 +1041,20 @@
     </div>
     <!-- Status -->
     <div style="padding:18px 18px 14px;text-align:center;border-bottom:1px solid #1e2235">
-      <!-- Avatar: click to upload -->
-      <div style="position:relative;width:64px;height:64px;margin:0 auto 10px;cursor:pointer" onclick="document.getElementById('profileAvatarInput').click()" title="Click to change photo">
+      <!-- Avatar: click to upload (disabled while wallet is disconnected) -->
+      <div id="profileAvatarWrap" style="position:relative;width:64px;height:64px;margin:0 auto 10px;cursor:pointer" onclick="profileAvatarClick()" title="Click to change photo">
         <div id="popupAvatar" style="width:64px;height:64px;border-radius:50%;background:#27c97f22;border:2px solid #27c97f55;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#27c97f;overflow:hidden">P</div>
-        <div style="position:absolute;bottom:0;right:0;width:20px;height:20px;border-radius:50%;background:#27c97f;display:flex;align-items:center;justify-content:center;border:2px solid #13161d">
+        <div id="profileAvatarEditDot" style="position:absolute;bottom:0;right:0;width:20px;height:20px;border-radius:50%;background:#27c97f;display:flex;align-items:center;justify-content:center;border:2px solid #13161d">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
       </div>
       <input id="profileAvatarInput" type="file" accept="image/*" style="display:none" onchange="profileAvatarPicked(this)">
-      <div id="profileAvatarStatus" style="font-size:9px;color:#6b7280;margin-bottom:6px">Click photo to change</div>
-      <div style="display:inline-flex;align-items:center;gap:5px;background:#27c97f15;border:1px solid #27c97f30;border-radius:20px;padding:3px 12px;margin-bottom:10px">
-        <span style="width:6px;height:6px;border-radius:50%;background:#27c97f;display:inline-block;flex-shrink:0"></span>
-        <span style="font-size:10px;color:#27c97f;font-weight:600">CONNECTED</span>
+      <div id="profileAvatarStatus" style="font-size:9px;color:#6b7280;margin-bottom:6px">Connect wallet to set a photo</div>
+      <div id="popupStatusBadge" style="display:inline-flex;align-items:center;gap:5px;background:#6b728015;border:1px solid #6b728030;border-radius:20px;padding:3px 12px;margin-bottom:10px">
+        <span id="popupStatusDot" style="width:6px;height:6px;border-radius:50%;background:#6b7280;display:inline-block;flex-shrink:0"></span>
+        <span id="popupStatusText" style="font-size:10px;color:#8b92a8;font-weight:600">NOT CONNECTED</span>
       </div>
-      <div style="background:#27c97f10;border:1px solid #27c97f30;border-radius:10px;padding:8px 12px;text-align:center">
+      <div id="popupWalletBox" style="display:none;background:#27c97f10;border:1px solid #27c97f30;border-radius:10px;padding:8px 12px;text-align:center">
         <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#27c97f;margin-right:6px;vertical-align:middle;flex-shrink:0"></span><span id="popupWalletFull" style="font-size:10px;font-family:monospace;color:#27c97f;font-weight:600;word-break:break-all;line-height:1.6">—</span>
       </div>
     </div>
@@ -1080,15 +1095,10 @@
         Copy Address
       </button>
     </div>
-    <!-- Disconnect -->
-    <div style="padding:14px 18px">
-      <button onclick="__profileDisconnect()" style="width:100%;background:#ff4d4d12;border:1px solid #ff4d4d44;border-radius:10px;color:#ff6b6b;font-size:12px;font-weight:700;padding:10px;cursor:pointer;letter-spacing:0.5px">
-        DISCONNECT
-      </button>
-    </div>
-    <div style="padding-bottom:12px;text-align:center;font-size:10px;color:#4b5563">EVM wallets · MetaMask</div>
+    <!-- Disconnect is done from the top-right wallet popup only -->
+    <div style="padding-top:14px;padding-bottom:12px;text-align:center;font-size:10px;color:#4b5563">EVM wallets · MetaMask</div>
   </div>
 
-  <script src="js/app.js?v=108"></script>
+  <script src="js/app.js?v=116"></script>
 </body>
 </html>

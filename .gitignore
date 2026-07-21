@@ -7,3 +7,7 @@ backend/.env.local
 !.env.example
 !backend/.env.example
 backend/.secrets.json
+
+# Backend now runs on MySQL — this leftover SQLite file is no longer read by
+# the app. Kept on disk only in case old data needs to be migrated manually.
+backend/bloombark.db

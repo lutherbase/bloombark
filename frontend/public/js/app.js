@@ -40,7 +40,9 @@ function showToast(msg, type = 'success') {
 // injected <script> in production). Defaults to localhost:3001 in dev, or the
 // same origin the page is served from otherwise.
 const _isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
-const API_ORIGIN = window.BLOOMBARK_API_ORIGIN || (_isLocal ? 'http://localhost:3001' : location.origin);
+//const API_ORIGIN = window.BLOOMBARK_API_ORIGIN || (_isLocal ? 'http://localhost:3001' : location.origin);
+const PORT = 3000;
+const API_ORIGIN = 'https://be-bloombark.onrender.com';
 const API_BASE = API_ORIGIN + '/api';
 const WS_URL   = API_ORIGIN.replace(/^http/, 'ws');
 
@@ -2090,40 +2092,6 @@ function renderDashList(items, el) {
     }).join('');
 }
 
-function renderNewPairs(items, el) {
-  const filtered = filterByChain(items).slice(0, 10);
-  if (!filtered.length) { el.innerHTML = '<div class="dash-loading">No data for this chain</div>'; return; }
-  el.innerHTML = `
-    <div class="dash-vol-header">
-      <span>#</span><span>TOKEN / PAIR</span><span style="text-align:right">PRICE</span>
-      <span style="text-align:right">24H CHANGE</span><span style="text-align:right">24H VOLUME</span>
-      <span style="text-align:right">MCAP</span><span style="text-align:right">LIQ</span>
-      <span style="text-align:right">AGE</span><span style="text-align:right">BUYS</span><span style="text-align:right">SELLS</span>
-    </div>` +
-    filtered.map((t, i) => {
-      const chg = t.priceChange24h || 0;
-      const chgColor = chg >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-      const chainColor = CHAIN_COLOR[t.networkId] || '#8b92a8';
-      return `<div class="dash-vol-row" onclick="openInAnalyzer('${t.address}','${t.networkId}')">
-        <span class="dash-vol-rank">${i+1}</span>
-        <div class="dash-vol-info">
-          <span class="dash-vol-name">${t.name}</span>
-          <span class="dash-vol-pair">
-            <span class="dash-chain-badge" style="background:${chainColor}22;color:${chainColor}">${t.network}</span>
-          </span>
-        </div>
-        <span class="dash-vol-price">${dashFmtPrice(t.price)}</span>
-        <span class="dash-vol-change" style="color:${chgColor}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
-        <span class="dash-vol-volume">${dashFmtVol(t.volume24h)}</span>
-        <span class="dash-vol-liq">${dashFmtVol(t.fdv)}</span>
-        <span class="dash-vol-liq">${dashFmtVol(t.liquidity)}</span>
-        <span class="dash-vol-liq" style="color:var(--accent-green)">${dashAge(t.createdAt) || '-'}</span>
-        <span class="dash-vol-liq" style="color:var(--accent-green)">${t.buys24h || 0}</span>
-        <span class="dash-vol-liq" style="color:var(--accent-red)">${t.sells24h || 0}</span>
-      </div>`;
-    }).join('');
-}
-
 function renderDashFilter() {
   const bar = $('dashFilterBar');
   const STATIC_CHAINS = [
@@ -2143,7 +2111,7 @@ function renderDashFilter() {
 }
 
 function _setDashLoading() {
-  ['dashVolumeGrid','dashTrendingList','dashNewPairsList'].forEach(id => {
+  ['dashVolumeGrid','dashTrendingList'].forEach(id => {
     const el = $(id);
     if (el) el.innerHTML = `<div class="dash-loading">Loading...</div>`;
   });
@@ -2154,9 +2122,6 @@ async function fetchDashboard(chain) {
   const label = chain === 'all' ? 'All Chains' : ({ ethereum:'Ethereum', base:'Base', robinhood:'Robinhood' }[chain] || chain);
   $('dashVolSub').textContent   = `${label} · 24h`;
   $('dashTrendSub').textContent = label;
-  $('dashNewSub').textContent   = label;
-  const newPairsSection = $('dashNewPairsSection');
-  if (newPairsSection) newPairsSection.style.display = chain === 'all' ? 'none' : '';
   _setDashLoading();
   try {
     const url  = chain === 'all' ? `${API_BASE}/dashboard` : `${API_BASE}/dashboard?chain=${chain}`;
@@ -2165,15 +2130,14 @@ async function fetchDashboard(chain) {
     if (!json.success) throw new Error(json.error);
     if (json.empty) {
       const msg = `<div class="dash-loading" style="color:var(--text-muted);text-align:center;padding:32px 0">🚧 ${label} data is coming soon — chain not yet indexed</div>`;
-      ['dashVolumeGrid','dashTrendingList','dashNewPairsList'].forEach(id => { const el = $(id); if (el) el.innerHTML = msg; });
+      ['dashVolumeGrid','dashTrendingList'].forEach(id => { const el = $(id); if (el) el.innerHTML = msg; });
       return;
     }
     _dashData = json.data;
     renderBestVolume(_dashData.bestVolume);
     renderDashList(_dashData.trending,  $('dashTrendingList'));
-    if (chain !== 'all') renderNewPairs(_dashData.newPairs, $('dashNewPairsList'));
   } catch (e) {
-    ['dashVolumeGrid','dashTrendingList','dashNewPairsList'].forEach(id => {
+    ['dashVolumeGrid','dashTrendingList'].forEach(id => {
       const el = $(id);
       if (el) el.innerHTML = `<div class="dash-loading" style="color:var(--accent-red)">Failed to load data</div>`;
     });
@@ -2185,7 +2149,6 @@ async function loadDashboard() {
   renderDashFilter();
   $('dashVolSub').textContent   = 'All Chains · 24h';
   $('dashTrendSub').textContent = 'All Chains';
-  $('dashNewSub').textContent   = 'All Chains';
   await fetchDashboard('all');
 }
 
@@ -2230,14 +2193,21 @@ function openWalletModal() {
       </div>
       <div style="text-align:center;font-size:10px;color:#4b5563">EVM wallets · MetaMask</div>`;
   } else {
+    // Mobile browser with no injected wallet → offer the MetaMask app hand-off
+    // instead of an extension button that can never find window.ethereum there.
+    const needsAppHandoff = _isMobileDevice() && !window.ethereum;
+    const subtitle = needsAppHandoff
+      ? 'Open in the MetaMask app'
+      : (_isInMetaMaskApp() ? 'Connected via MetaMask app browser' : 'Browser extension wallet');
     document.getElementById('walletModalBody').innerHTML = `
       <button id="mmBtn" onclick="privyConnectMM()" style="width:100%;display:flex;align-items:center;gap:12px;background:#13161d;border:1px solid #2d3144;border-radius:10px;padding:14px 16px;cursor:pointer;margin-bottom:10px;transition:border-color 0.15s">
         <img src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg" width="28" height="28"/>
         <div style="text-align:left">
           <div style="font-size:12px;font-weight:700;color:#e2e8f0;font-family:monospace">MetaMask</div>
-          <div style="font-size:10px;color:#8b92a8">Browser extension wallet</div>
+          <div style="font-size:10px;color:#8b92a8">${subtitle}</div>
         </div>
       </button>
+      ${needsAppHandoff ? `<div style="text-align:center;font-size:10px;color:#6b7280;padding:0 4px 10px">Tap above to continue in the MetaMask app — it'll reopen this page inside its browser so you can connect.</div>` : ''}
       <div style="text-align:center;font-size:10px;color:#8b92a8;padding-top:10px">EVM wallets · MetaMask</div>`;
   }
   modal.style.display = 'flex';
@@ -2368,7 +2338,13 @@ async function saveProfile() {
 
 let _pendingProfileAvatar = null;
 
+window.profileAvatarClick = function() {
+  if (!window._privyWallet) { showToast('Connect your wallet first'); return; }
+  document.getElementById('profileAvatarInput')?.click();
+};
+
 window.profileAvatarPicked = function(input) {
+  if (!window._privyWallet) { showToast('Connect your wallet first'); input.value = ''; return; }
   const file = input.files?.[0];
   if (!file) return;
   if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)'); input.value = ''; return; }
@@ -2397,9 +2373,22 @@ window.profileAvatarPicked = function(input) {
   input.value = '';
 };
 
+function _setAvatarEditEnabled(enabled) {
+  const wrap = document.getElementById('profileAvatarWrap');
+  const dot  = document.getElementById('profileAvatarEditDot');
+  const st   = document.getElementById('profileAvatarStatus');
+  if (wrap) { wrap.style.cursor = enabled ? 'pointer' : 'not-allowed'; wrap.style.opacity = enabled ? '1' : '0.5'; }
+  if (dot)  dot.style.display = enabled ? 'flex' : 'none';
+  if (st)   st.textContent = enabled ? 'Click photo to change' : 'Connect wallet to set a photo';
+}
+
 function _updateSidebarProfile(user) {
   const walletEl  = document.getElementById('sidebarWallet');
   const popupFull = document.getElementById('popupWalletFull');
+  const statusDot  = document.getElementById('popupStatusDot');
+  const statusText = document.getElementById('popupStatusText');
+  const statusBadge = document.getElementById('popupStatusBadge');
+  const walletBox   = document.getElementById('popupWalletBox');
   if (!walletEl) return;
   if (user) {
     const addr = user._displayAddress
@@ -2416,13 +2405,25 @@ function _updateSidebarProfile(user) {
     const avatarEl = document.getElementById('sidebarAvatar');
     _setAvatarEl(avatarEl, _userProfile?.avatar, fallback);
     if (popupFull) popupFull.textContent = display || '—';
+    if (statusText)  statusText.textContent = 'CONNECTED';
+    if (statusDot)   statusDot.style.background = '#27c97f';
+    if (statusBadge) { statusBadge.style.background = '#27c97f15'; statusBadge.style.borderColor = '#27c97f30'; statusText.style.color = '#27c97f'; }
+    if (walletBox)   walletBox.style.display = '';
+    _setAvatarEditEnabled(true);
     // Load profile from server
     loadUserProfile(window._privyWallet);
   } else {
     walletEl.textContent = 'Not connected';
     const avatarEl = document.getElementById('sidebarAvatar');
     if (avatarEl) avatarEl.innerHTML = 'P';
+    const popupAvatar = document.getElementById('popupAvatar');
+    if (popupAvatar) popupAvatar.innerHTML = 'P';
     if (popupFull) popupFull.textContent = '—';
+    if (statusText)  statusText.textContent = 'NOT CONNECTED';
+    if (statusDot)   statusDot.style.background = '#6b7280';
+    if (statusBadge) { statusBadge.style.background = '#6b728015'; statusBadge.style.borderColor = '#6b728030'; statusText.style.color = '#8b92a8'; }
+    if (walletBox)   walletBox.style.display = 'none';
+    _setAvatarEditEnabled(false);
     _userProfile = null;
     // Reset wallet button
     const walletBtnAvatar = document.getElementById('walletBtnAvatar');
@@ -2442,8 +2443,7 @@ window.toggleProfilePopup = () => {
   if (open) {
     const inp = document.getElementById('chatNameInput');
     if (inp) { inp.value = ''; inp.placeholder = _chatName || 'Set your chat name…'; }
-    const st = document.getElementById('profileAvatarStatus');
-    if (st) st.textContent = 'Click photo to change';
+    _setAvatarEditEnabled(!!window._privyWallet);
     _chatNameRenderState();
   }
 };
@@ -2640,37 +2640,15 @@ function renderNarrativeGrid() {
 }
 
 async function loadLandingCA() {
+  // $BBRK contract not deployed yet — keep the static "Not Live Yet" label,
+  // don't fetch or overwrite it with a real/masked address.
   const el = document.getElementById('landingCA');
   const copyBtn = document.getElementById('landingCACopy');
   if (!el) return;
-  if (_cachedCA) { _renderCA(el, copyBtn, _cachedCA); return; }
-  el.textContent = 'Loading…';
-  try {
-    const res = await fetch(`${API_BASE}/config/public`);
-    const data = await res.json();
-    _cachedCA = data.contractAddress || 'coming_soon';
-    _renderCA(el, copyBtn, _cachedCA);
-  } catch(_) { el.textContent = 'Coming Soon'; }
-}
-function _renderCA(el, copyBtn, ca) {
-  const isComingSoon = ca === 'coming_soon' || !ca;
-  if (isComingSoon) {
-    // Mask as an EVM-style address (0x + 40 hex chars) with X's
-    const mask = '0xXX' + 'X'.repeat(34) + 'xxxx';
-    el.innerHTML = `<span style="opacity:0.35;letter-spacing:1.5px">${mask}</span>`;
-    el.style.color = '#4b5563';
-    el.title = 'Contract address will be revealed at launch';
-  } else {
-    el.textContent = ca;
-    el.style.color = '#27c97f';
-    el.title = '';
-  }
-  if (copyBtn) {
-    copyBtn.style.display = 'inline-block';
-    copyBtn.disabled = isComingSoon;
-    copyBtn.style.opacity = isComingSoon ? '0.35' : '1';
-    copyBtn.style.cursor = isComingSoon ? 'not-allowed' : 'pointer';
-  }
+  el.textContent = 'Not Live Yet';
+  el.style.color = '#4b5563';
+  el.title = 'Contract address will be revealed at launch';
+  if (copyBtn) copyBtn.style.display = 'none';
 }
 window.__copyCA = () => {
   if (!_cachedCA || _cachedCA === 'coming_soon') return;
@@ -2761,8 +2739,34 @@ async function _bbMe() {
 }
 
 
+// ── MetaMask mobile app support ──────────────────────────────────────────────
+// On a phone with no injected provider (i.e. a normal mobile browser, not the
+// MetaMask app's own in-app browser), there's nothing to connect to — MetaMask
+// only injects window.ethereum inside its own in-app browser. The fix is to
+// hand off to the MetaMask app via its official deep link, which reopens this
+// exact page inside MetaMask's in-app browser, where window.ethereum then
+// exists and the normal eth_requestAccounts flow below works unchanged.
+function _isMobileDevice() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+function _isInMetaMaskApp() {
+  return !!(window.ethereum && window.ethereum.isMetaMask);
+}
+function metamaskDeepLink() {
+  const noProtocol = location.host + location.pathname + location.search;
+  return `https://metamask.app.link/dapp/${noProtocol}`;
+}
+window.connectMetaMaskMobile = function() {
+  window.location.href = metamaskDeepLink();
+};
+
 // Direct MetaMask (EVM) connection — no Privy / SIWE signature required
 async function privyConnectMM() {
+  // Mobile browser with no injected wallet → hand off to the MetaMask app
+  if (_isMobileDevice() && !window.ethereum) {
+    connectMetaMaskMobile();
+    return;
+  }
   const btn = document.getElementById('mmBtn');
   if (btn) { btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; btn.querySelector('div div').textContent = 'Connecting…'; }
   try {
@@ -2811,7 +2815,7 @@ if (window.ethereum?.on) {
   try {
     // 0. User explicitly disconnected last time — don't auto-reconnect,
     //    even though MetaMask itself still has this site "authorized".
-    if (localStorage.getItem('bb_wallet_disconnected') === '1') return;
+    if (localStorage.getItem('bb_wallet_disconnected') === '1') { _setWalletConnected(null); return; }
 
     // 1. Check if backend session still valid (cookie auto-login)
     const bbUser = await _bbMe();
@@ -2821,14 +2825,18 @@ if (window.ethereum?.on) {
       return;
     }
     // 2. Silent reconnect if MetaMask is already authorized for this site
-    if (!window.ethereum) return;
+    if (!window.ethereum) { _setWalletConnected(null); return; }
     const accounts = await window.ethereum.request({ method: 'eth_accounts' });
     const wallet = accounts?.[0];
     if (wallet) {
       await _bbLogin(wallet, null, 'metamask');
       _setWalletConnected({ wallet: { address: wallet }, _displayAddress: wallet });
+    } else {
+      _setWalletConnected(null);
     }
-  } catch(_) {}
+  } catch(_) {
+    _setWalletConnected(null);
+  }
 })();
 
 /* ─── Community Chat ────────────────────────────────────────────────────────── */
@@ -3434,7 +3442,10 @@ function _fromRaw(raw, decimals) {
 function _fmtAmt(n) {
   if (!isFinite(n)) return '—';
   if (n === 0) return '0';
-  if (n < 0.0001) return n.toExponential(3);
+  if (n < 0.0001) {
+    const leadZeros = (n.toFixed(20).match(/^0\.(0*)/) || [,''])[1].length;
+    return n.toFixed(Math.min(leadZeros + 4, 18));
+  }
   if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
   if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
   if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -3484,7 +3495,7 @@ async function tradeLoadToken() {
       $('tradeTokenName').textContent   = _tradeToken.name;
       $('tradeChainBadge').textContent  = chain.toUpperCase();
       $('tradeTokenAddr').textContent   = addr.slice(0,10) + '…' + addr.slice(-8);
-      $('tradeTokenPrice').textContent  = '$' + (_tradeToken.price < 0.0001 ? _tradeToken.price.toExponential(3) : _tradeToken.price.toFixed(6));
+      $('tradeTokenPrice').textContent  = fmt.price(_tradeToken.price);
       const chg = parseFloat(p.priceChange?.h24 ?? 0);
       const chgEl = $('tradeTokenChange');
       chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '% (24h)';
@@ -3943,7 +3954,7 @@ function _applyTradePrice(p) {
   const el = $('tradeTokenPrice');
   if (el) {
     const prev = t.price || 0;
-    el.textContent = '$' + (p < 0.0001 ? p.toExponential(3) : p.toFixed(6));
+    el.textContent = fmt.price(p);
     if (prev > 0 && p !== prev) {
       el.style.color = p > prev ? '#27c97f' : '#ff4d4d';
       el.style.transition = 'color 0.2s';
@@ -4008,11 +4019,7 @@ async function tradeLoadTxs(showLoading = true) {
 
     const trades = allTrades.slice(0, 30);
     const explorer = TRADE_CHAINS[t.chain]?.explorer || '';
-    const fmtTxPrice = p => !p ? '—'
-      : p < 0.0001 ? '$' + p.toExponential(2)
-      : p < 1      ? '$' + p.toFixed(6)
-      : p < 1000   ? '$' + p.toFixed(4)
-      : '$' + p.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    const fmtTxPrice = p => !p ? '—' : fmt.price(p);
     list.innerHTML = trades.map(tr => `
       <div style="display:grid;grid-template-columns:56px 1fr 1fr 1fr 62px 34px;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border-light);font-size:11px;align-items:center">
         <span style="font-weight:800;color:${tr.isBuy ? '#27c97f' : '#ff4d4d'}">${tr.isBuy ? '▲ BUY' : '▼ SELL'}</span>
